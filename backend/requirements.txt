@@ -1,0 +1,45 @@
+# CraftRelay — FastAPI backend dependencies
+# Tested on Python 3.14.6 / Windows (all packages have cp314 win_amd64 wheels)
+# Last verified: October 2026
+
+# ── Web framework ────────────────────────────────────────
+fastapi==0.115.5
+uvicorn[standard]==0.32.0
+
+# ── Data validation ──────────────────────────────────────
+# pydantic-core 2.50.1 ships a cp314-cp314-win_amd64 wheel
+pydantic==2.14.1
+pydantic-settings==2.6.1
+
+# ── Database (ORM + migrations) ──────────────────────────
+# sqlalchemy 2.1.5 and greenlet 3.5.6 ship cp314 win_amd64 wheels
+sqlalchemy==2.1.5
+alembic==1.14.0
+greenlet==3.5.6
+
+# ── PostgreSQL async driver ───────────────────────────────
+# asyncpg 0.32.0 ships a cp314-cp314-win_amd64 wheel
+asyncpg==0.32.0
+
+# NOTE: psycopg2-binary still has no cp314 wheel.
+# asyncpg is used for all async queries.
+# Alembic migrations run via asyncpg with run_sync.
+# Uncomment if/when a cp314 wheel becomes available:
+# psycopg2-binary==2.9.10
+
+# ── Authentication ────────────────────────────────────────
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+
+# ── File uploads ─────────────────────────────────────────
+python-multipart==0.0.12
+
+# ── HTTP client (tests + AI calls) ───────────────────────
+httpx==0.28.0
+
+# ── Async SQLite (tests without PostgreSQL) ───────────────
+aiosqlite==0.20.0
+
+# ── Testing ──────────────────────────────────────────────
+pytest==8.3.3
+pytest-asyncio==0.24.0

@@ -1,0 +1,74 @@
+# CraftRelay — Fictional Seed Data
+# These records are entirely fictional and for demonstration only.
+# They are not derived from any real government qualification database.
+
+workers:
+  - id: "w-001"
+    name: "Arjun Sharma"
+    trade: "Electrician"
+    location: "Jaipur, Rajasthan"
+    experience_years: 5
+    skills_declared:
+      - "Low-voltage wiring"
+      - "MCB panel installation"
+      - "Earthing and grounding"
+    verified_competencies: []
+
+  - id: "w-002"
+    name: "Priya Nair"
+    trade: "Plumber"
+    location: "Kochi, Kerala"
+    experience_years: 8
+    skills_declared:
+      - "Pipe fitting"
+      - "Sanitary installations"
+    verified_competencies:
+      - skill: "Pipe fitting"
+        verified_by: "a-001"
+        date: "2026-03-15"
+
+assessors:
+  - id: "a-001"
+    name: "Dr. Suresh Menon"
+    specialisation: "Plumbing & Sanitation"
+    location: "Thiruvananthapuram, Kerala"
+
+customers:
+  - id: "c-001"
+    name: "Meera Iyer"
+    location: "Chennai, Tamil Nadu"
+
+admins:
+  - id: "adm-001"
+    name: "CraftRelay Admin"
+
+# ── Illustrative qualifications ───────────────────────────
+# These qualification codes are ILLUSTRATIVE ONLY.
+# They are not official NCVT, NSDC, or PMKVY records.
+qualifications:
+  - code: "CR-ELEC-2024-001"
+    title: "Basic Electrical Wiring — Illustrative Demo Qualification"
+    note: "ILLUSTRATIVE — not an official government qualification"
+    version: "1.0"
+    criteria:
+      - id: "crit-001"
+        text: "Safely terminate and connect conductors using correct tooling"
+        mandatory: true
+      - id: "crit-002"
+        text: "Identify and install appropriate MCB ratings for domestic circuits"
+        mandatory: true
+      - id: "crit-003"
+        text: "Demonstrate correct earthing continuity testing procedure"
+        mandatory: false
+
+  - code: "CR-PLMB-2024-001"
+    title: "Domestic Plumbing Fundamentals — Illustrative Demo Qualification"
+    note: "ILLUSTRATIVE — not an official government qualification"
+    version: "1.0"
+    criteria:
+      - id: "crit-101"
+        text: "Select and cut pipe materials appropriate to water pressure and temperature"
+        mandatory: true
+      - id: "crit-102"
+        text: "Install and test a hot-water cylinder pressure-relief valve"
+        mandatory: true
