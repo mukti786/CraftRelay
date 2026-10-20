@@ -300,10 +300,10 @@ function CriterionRow({ criterion, evidence, tasks, caseId, disabled, onUploaded
       <button disabled={busy} className="button secondary small-button">{busy ? DEMO_MODE ? 'Saving metadata…' : 'Uploading…' : DEMO_MODE ? 'Save evidence metadata' : 'Add evidence'}</button>
       {progress !== null && <div className="upload-progress" role="status" aria-live="polite">
         <progress max="100" value={progress} aria-label="Evidence upload progress" />
-        <span>{DEMO_MODE ? 'Evidence metadata saved locally · the file was not uploaded' : progress < 100 ? `Uploading ${progress}%` : 'Upload sent · validating securely…'}</span>
+        <span>{DEMO_MODE ? 'Evidence details saved in this browser · file not stored' : progress < 100 ? `Uploading ${progress}%` : 'Upload sent · validating securely…'}</span>
       </div>}
       {error && <span className="form-error" role="alert">{error}</span>}
-      <small>{DEMO_MODE ? 'Demo only: PDF, JPEG, PNG, or WebP · max 20 MB. Only filename, type, size, and your note stay in this browser; the file itself is not uploaded or stored.' : 'PDF, JPEG, PNG, or WebP · max 20 MB · stored privately. Evidence is reviewed by an assessor.'}</small>
+      <small>{DEMO_MODE ? 'PDF, JPEG, PNG, or WebP · max 20 MB. The file name, type, size, and note are saved in this browser; the file itself is not stored.' : 'PDF, JPEG, PNG, or WebP · max 20 MB · stored privately. Evidence is reviewed by an assessor.'}</small>
     </form>}
   </article></Localized>
 }

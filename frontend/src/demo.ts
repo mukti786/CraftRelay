@@ -26,7 +26,7 @@ const workerUser: User = { id: 'demo-worker-asha', email: 'asha.worker@demo.craf
 const assessorUser: User = { id: 'demo-assessor-ravi', email: 'ravi.assessor@demo.craftrelay', full_name: 'Ravi Verma', role: 'assessor' }
 const demoQualification: Qualification = {
   id: 'demo-qualification-masonry-v1', code: 'CR-MAS-01', version: '1.0',
-  title: 'Masonry Work — Demonstration Qualification', source_name: 'CraftRelay synthetic demo catalogue',
+  title: 'Masonry Work — Illustrative Qualification', source_name: 'CraftRelay illustrative catalogue',
   source_url: '', official: false, criterion_count: 2,
 }
 const criteria: Criterion[] = [
@@ -42,7 +42,7 @@ function initialState(): DemoState {
   return {
     profile: {
       id: workerUser.id, full_name: workerUser.full_name, trade: 'Masonry worker', experience_years: 7,
-      service_area: 'Raipur, Chhattisgarh', bio: 'Synthetic demonstration profile. Experienced with residential masonry and site preparation.',
+      service_area: 'Raipur, Chhattisgarh', bio: 'Experienced with residential masonry and site preparation.',
       available: true, skills: [], verified_qualifications: [],
     },
     skills: [
@@ -77,8 +77,8 @@ function currentUser(state = readState()): User | null {
 function requireRole(...roles: User['role'][]) {
   const state = readState()
   const user = currentUser(state)
-  if (!user) throw new ApiError('Sign in to the synthetic demo workspace first.', 401)
-  if (!roles.includes(user.role)) throw new ApiError('This demo workspace is not available for the current role.', 403)
+  if (!user) throw new ApiError('Sign in to your workspace first.', 401)
+  if (!roles.includes(user.role)) throw new ApiError('This workspace is not available for the current role.', 403)
   return { state, user }
 }
 function bodyOf(options: RequestInit): Record<string, unknown> {
@@ -111,7 +111,7 @@ function assessorCase(item: DemoCase) {
 function parseCaseId(path: string) { return path.match(/\/cases\/([^/]+)/)?.[1] }
 function ensureDemoCase(state: DemoState, caseId: string) {
   const item = state.cases.find(candidate => candidate.id === caseId)
-  if (!item) throw new ApiError('Demo assessment case was not found.', 404)
+  if (!item) throw new ApiError('Assessment case was not found.', 404)
   return item
 }
 
@@ -131,7 +131,7 @@ export async function demoUpload<T>(path: string, form: FormData, onProgress: (p
   const caseId = parseCaseId(path)
   if (!caseId) throw new ApiError('Assessment case was not specified.', 400)
   const item = ensureDemoCase(state, caseId)
-  if (item.worker_id !== user.id) throw new ApiError('You cannot change another worker’s demo case.', 403)
+  if (item.worker_id !== user.id) throw new ApiError('You cannot change another worker’s case.', 403)
   if (item.status !== 'IN_PROGRESS' && item.status !== 'NEEDS_MORE') throw new ApiError('Evidence metadata is locked after submission.', 409)
   const file = form.get('file')
   const description = String(form.get('description') ?? '').trim()
@@ -141,9 +141,9 @@ export async function demoUpload<T>(path: string, form: FormData, onProgress: (p
   if (!allowed.has(file.type)) throw new ApiError('Choose a PDF, JPEG, PNG, or WebP file.', 422)
   if (file.size > 20 * 1024 * 1024) throw new ApiError('Files must be 20 MB or smaller.', 422)
   if (description.length < 5) throw new ApiError('Describe the evidence in at least five characters.', 422)
-  if (!criteria.some(criterion => criterion.id === criterionId)) throw new ApiError('Choose a criterion from this demo qualification.', 422)
+  if (!criteria.some(criterion => criterion.id === criterionId)) throw new ApiError('Choose a criterion from this qualification.', 422)
   item.evidence.push({ id: `demo-evidence-${crypto.randomUUID()}`, criterion_id: criterionId,
-    description: `${description} (demo metadata only; file not uploaded)`, original_name: file.name.slice(0, 180),
+    description: `${description} (file details only; file not stored)`, original_name: file.name.slice(0, 180),
     review_status: 'PENDING', reviewer_notes: '', uploaded_at: new Date().toISOString(), content_type: file.type,
     size: file.size })
   writeState(state)
@@ -158,7 +158,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}): Promi
 
   if (path === '/auth/me' && method === 'GET') {
     const user = currentUser(state)
-    if (!user) throw new ApiError('No active demo session.', 401)
+    if (!user) throw new ApiError('No active workspace session.', 401)
     return user as T
   }
   if (path === '/auth/logout' && method === 'POST') { state.activeRole = null; writeState(state); return undefined as T }
@@ -204,7 +204,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}): Promi
   }
   if (path === '/worker/cases' && method === 'POST') {
     const { state: active, user } = requireRole('worker')
-    if (data.qualification_id !== demoQualification.id) throw new ApiError('This qualification is not available in the demo catalogue.', 422)
+    if (data.qualification_id !== demoQualification.id) throw new ApiError('This qualification is not available in the catalogue.', 422)
     const item: DemoCase = { id: `demo-case-${crypto.randomUUID()}`, worker_id: user.id, status: 'IN_PROGRESS', qualification_id: demoQualification.id, evidence: [], decisions: {} }
     active.cases.push(item)
     writeState(active)
@@ -228,12 +228,12 @@ export async function demoApi<T>(path: string, options: RequestInit = {}): Promi
   }
   if (path === '/assessor/ai-assistance' && method === 'GET') {
     requireRole('assessor')
-    return { available: false, reason: 'AI provider is not connected in this frontend-only demo.', manual_review_available: true } as T
+    return { available: false, reason: 'AI assistance is not available in this workspace.', manual_review_available: true } as T
   }
   if (path.includes('/ai-suggestions') && method === 'GET') { requireRole('assessor'); return [] as T }
   if (path.includes('/ai-suggestions') && method === 'POST') {
     requireRole('assessor')
-    throw new ApiError('AI assistance is unavailable in this frontend-only demo. Continue with manual review.', 503)
+    throw new ApiError('AI assistance is unavailable in this workspace. Continue with manual review.', 503)
   }
   const evidenceMatch = path.match(/^\/assessor\/evidence\/([^/]+)$/)
   if (evidenceMatch && method === 'PATCH') {
@@ -274,5 +274,5 @@ export async function demoApi<T>(path: string, options: RequestInit = {}): Promi
     writeState(active)
     return { status: item.status } as T
   }
-  throw new ApiError(`This action is not part of the frontend-only demo: ${method} ${path}`, 501)
+  throw new ApiError('This action is unavailable in this workspace.', 501)
 }
