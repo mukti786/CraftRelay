@@ -295,7 +295,14 @@ async def current_user(request: Request, db: AsyncSession = Depends(get_db)) -> 
         raise
     except jwt.PyJWTError as exc:
         raise HTTPException(401, "Session expired") from exc
-    if not user or not user.active:
+    session_version = claims.get("sv", 0)
+    if (
+        not user
+        or not user.active
+        or isinstance(session_version, bool)
+        or not isinstance(session_version, int)
+        or session_version != user.session_version
+    ):
         raise HTTPException(401, "Account unavailable")
     return user
 
@@ -470,7 +477,14 @@ def cookie_options() -> dict:
 def set_session(response: Response, user: User):
     exp = datetime.now(UTC) + timedelta(minutes=settings.access_token_minutes)
     token = jwt.encode(
-        {"sub": user.id, "role": user.role, "exp": exp}, settings.secret_key, algorithm=ALGORITHM
+        {
+            "sub": user.id,
+            "role": user.role,
+            "sv": user.session_version,
+            "exp": exp,
+        },
+        settings.secret_key,
+        algorithm=ALGORITHM,
     )
     response.set_cookie(
         COOKIE, token, max_age=settings.access_token_minutes * 60, **cookie_options()
@@ -487,7 +501,26 @@ async def login(payload: LoginInput, response: Response, db: AsyncSession = Depe
 
 
 @app.post("/api/auth/logout")
-async def logout(response: Response):
+async def logout(response: Response, request: Request, db: AsyncSession = Depends(get_db)):
+    token = request.cookies.get(COOKIE)
+    if token:
+        try:
+            claims = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
+        except jwt.PyJWTError:
+            claims = {}
+        user_id = claims.get("sub")
+        session_version = claims.get("sv", 0)
+        if (
+            isinstance(user_id, str)
+            and user_id
+            and isinstance(session_version, int)
+            and not isinstance(session_version, bool)
+        ):
+            user = await db.get(User, user_id)
+            if user and user.active and session_version == user.session_version:
+                user.session_version += 1
+                await audit(db, user, "auth.sessions_revoked", "user", user.id)
+                await db.commit()
     response.set_cookie(COOKIE, "", max_age=0, expires=0, **cookie_options())
     return {"ok": True}
 
@@ -1888,6 +1921,8 @@ async def admin_user_status(
         raise HTTPException(404, "User not found")
     if target.id == user.id and not payload.active:
         raise HTTPException(409, "You cannot deactivate your own account")
+    if target.active != payload.active:
+        target.session_version += 1
     target.active = payload.active
     await audit(db, user, "admin.user.status_changed", "user", target.id, {"active": target.active})
     await db.commit()
@@ -1907,6 +1942,8 @@ async def admin_user_role(
     if target.id == user.id and payload.role != "admin":
         raise HTTPException(409, "You cannot remove your own administrator role")
     previous = target.role
+    if previous != payload.role:
+        target.session_version += 1
     target.role = payload.role
     if target.role == "worker" and not await worker_profile(db, target.id):
         db.add(WorkerProfile(user_id=target.id))

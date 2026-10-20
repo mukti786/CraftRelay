@@ -33,6 +33,7 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(512))
     role: Mapped[str] = mapped_column(String(24), index=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    session_version: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 

@@ -135,3 +135,35 @@ def test_existing_revision_17_without_defaults_upgrades_safely(monkeypatch):
         _assert_legacy_record_survived(database_path)
     finally:
         get_settings.cache_clear()
+
+
+def test_existing_users_receive_session_version_when_upgrading(monkeypatch):
+    _, database_path, config = _migration_database(monkeypatch)
+    try:
+        command.upgrade(config, "b2180a7e3f11")
+        engine = create_engine(URL.create("sqlite", database=str(database_path.resolve())))
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO users "
+                    "(id, email, full_name, password_hash, role, active, created_at) "
+                    "VALUES ('legacy-user', 'legacy@example.com', 'Legacy User', 'hash', "
+                    "'worker', 1, '2026-01-01T00:00:00')"
+                )
+            )
+        engine.dispose()
+
+        command.upgrade(config, "head")
+        command.check(config)
+        engine = create_engine(URL.create("sqlite", database=str(database_path.resolve())))
+        with engine.connect() as connection:
+            assert (
+                connection.execute(
+                    text("SELECT session_version FROM users WHERE id = 'legacy-user'")
+                ).scalar_one()
+                == 0
+            )
+            assert connection.execute(text("PRAGMA foreign_key_check")).all() == []
+        engine.dispose()
+    finally:
+        get_settings.cache_clear()

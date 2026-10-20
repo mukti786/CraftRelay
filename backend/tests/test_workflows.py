@@ -473,6 +473,10 @@ def test_registration_login_password_hash_duplicates_and_session_lifecycle(clien
     assert "path=/" in deleted_cookie and "samesite=lax" in deleted_cookie
     assert client.get("/api/auth/me").status_code == 401
 
+    # Clearing the browser cookie must also revoke a copied, unexpired token.
+    client.cookies.set(main.COOKIE, registered.cookies.get(main.COOKIE))
+    assert client.get("/api/auth/me").status_code == 401
+
     client.cookies.clear()
     client.cookies.set(main.COOKIE, "not-a-signed-session")
     assert client.get("/api/auth/me").status_code == 401
@@ -573,7 +577,15 @@ def test_privileged_signup_rejection_inactive_users_and_live_role_checks(client)
 
     promoted = admin_client.patch(f"/api/admin/users/{worker_id}/role", json={"role": "assessor"})
     assert promoted.status_code == 200
-    assert worker_client.get("/api/worker/profile").status_code == 403
+    assert worker_client.get("/api/worker/profile").status_code == 401
+    assert worker_client.get("/api/assessor/cases").status_code == 401
+    assert (
+        worker_client.post(
+            "/api/auth/login",
+            json={"email": "role-change@example.com", "password": "secure-worker-pass"},
+        ).status_code
+        == 200
+    )
     assert worker_client.get("/api/assessor/cases").status_code == 200
 
     deactivated = admin_client.patch(f"/api/admin/users/{worker_id}", json={"active": False})
@@ -586,6 +598,11 @@ def test_privileged_signup_rejection_inactive_users_and_live_role_checks(client)
         ).status_code
         == 401
     )
+
+    # Re-enabling the account must not revive a token issued before deactivation.
+    reactivated = admin_client.patch(f"/api/admin/users/{worker_id}", json={"active": True})
+    assert reactivated.status_code == 200
+    assert worker_client.get("/api/auth/me").status_code == 401
 
 
 def test_worker_ownership_is_enforced_for_cases_and_private_evidence(client):
