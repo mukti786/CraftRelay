@@ -27,15 +27,24 @@ test('primary navigation and icon-only actions expose semantics to assistive tec
   assert.match(source('Admin.tsx'), /aria-expanded=\{show\}/)
 })
 
-test('worker work requests remain in navigation and browser mode shows an honest empty state', () => {
+test('customer and worker work requests share the persisted browser workflow', () => {
   const app = source('App.tsx')
   assert.match(app, /\{key:'requests',label:'Work requests',icon:'↗'\}/)
   assert.match(app, /view==='requests' && <Worker section="requests"\/>/)
+  assert.match(app, /demoLogin\('customer'\)/)
+  assert.match(app, /view==='requests' && <Customer section="requests"\/>/)
+  const customer = source('Customer.tsx')
+  for (const field of ['title', 'service_type', 'description', 'location', 'preferred_date']) assert.match(customer, new RegExp(`name="${field}"`))
+  assert.match(customer, /qualificationFilter/)
+  assert.match(customer, /status history/)
   const worker = source('Worker.tsx')
-  assert.match(worker, /api\('\/worker\/requests'\)/)
-  assert.match(worker, /No work requests yet/)
+  assert.match(worker, /api<WorkRequest\[]>\('\/worker\/requests'\)/)
+  assert.match(worker, /request\.status === 'IN_PROGRESS'/)
   const localApi = source('demo.ts')
-  assert.match(localApi, /path === '\/worker\/requests' && method === 'GET'[\s\S]*?requireRole\('worker'\)[\s\S]*?return \[\] as T/)
+  assert.match(localApi, /route === '\/worker\/requests' && method === 'GET'[\s\S]*?active\.requests\.filter/)
+  assert.match(localApi, /route === '\/customer\/requests' && method === 'POST'/)
+  assert.match(localApi, /request\.history\.push/)
+  assert.match(localApi, /Reviews are available after the service is completed/)
 })
 
 test('failed data loads do not render success-shaped empty states', () => {

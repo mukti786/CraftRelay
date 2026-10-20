@@ -102,10 +102,11 @@ function DemoLanding({locale,setLocale,missingDraftCount,onAuth,error}:{locale:'
       {locale==='hne'&&<p className="draft-auth-note" role="status">Draft: {missingDraftCount} labels remain in English for review</p>}
       <section className="demo-entry-card" aria-labelledby="demo-entry-title">
         <p className="eyebrow">GET STARTED</p><h2 id="demo-entry-title">Choose a workspace</h2>
-        <p className="entry-intro">Explore the worker and assessor workflows.</p>
+        <p className="entry-intro">Choose a workspace to explore.</p>
         <div className="demo-auth-actions">
           <button className="button primary full demo-role-button" type="button" onClick={async()=>onAuth(await demoLogin('worker'))}><span><b>Worker login</b><small>Sample worker account · Asha Patel</small></span><span aria-hidden="true">→</span></button>
           <button className="button secondary full demo-role-button" type="button" onClick={async()=>onAuth(await demoLogin('assessor'))}><span><b>Assessor login</b><small>Sample assessor account · Ravi Verma</small></span><span aria-hidden="true">→</span></button>
+          <button className="button secondary full demo-role-button" type="button" onClick={async()=>onAuth(await demoLogin('customer'))}><span><b>Customer login</b><small>Sample customer account · Meera Singh</small></span><span aria-hidden="true">→</span></button>
         </div>
         {error&&<div className="alert" role="alert">{error}</div>}
         <div className="demo-auth-disclosure" role="note"><b>Sample account access</b><span>Sign-in here is simulated and does not verify identity. Changes are saved in this browser. Evidence files are not stored.</span></div>

@@ -1,4 +1,4 @@
-import { ApiError, Criterion, Qualification, User, Worker } from './api'
+import { ApiError, Criterion, Qualification, User, Worker, WorkRequest } from './api'
 
 type DemoEvidence = {
   id: string
@@ -19,11 +19,18 @@ type DemoCase = {
   evidence: DemoEvidence[]
   decisions: Record<string, { result: 'COMPETENT' | 'NOT_YET'; notes: string; assessor_name: string; updated_at: string; needs_reconfirmation: boolean }>
 }
-type DemoState = { profile: Worker; skills: Worker['skills']; cases: DemoCase[]; activeRole: User['role'] | null }
+export type DemoRequestStatus = 'REQUESTED' | 'ACCEPTED' | 'DECLINED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED'
+type DemoWorkRequest = WorkRequest & {
+  customer_id: string; customer_name: string; worker_id: string; title: string; service_type: string
+  description: string; location: string; preferred_date: string; status: DemoRequestStatus
+  history: { status: DemoRequestStatus; at: string }[]; review: { rating: number; comment: string } | null
+}
+type DemoState = { version: 2; profile: Worker; skills: Worker['skills']; cases: DemoCase[]; requests: DemoWorkRequest[]; activeRole: User['role'] | null }
 
 const storageKey = 'craftrelay.sih-demo.v1'
 const workerUser: User = { id: 'demo-worker-asha', email: 'asha.worker@demo.craftrelay', full_name: 'Asha Patel', role: 'worker' }
 const assessorUser: User = { id: 'demo-assessor-ravi', email: 'ravi.assessor@demo.craftrelay', full_name: 'Ravi Verma', role: 'assessor' }
+const customerUser: User = { id: 'demo-customer-meera', email: 'meera.customer@demo.craftrelay', full_name: 'Meera Singh', role: 'customer' }
 const demoQualification: Qualification = {
   id: 'demo-qualification-masonry-v1', code: 'CR-MAS-01', version: '1.0',
   title: 'Masonry Work — Illustrative Qualification', source_name: 'CraftRelay illustrative catalogue',
@@ -40,6 +47,7 @@ const initialEvidence: DemoEvidence[] = [
 
 function initialState(): DemoState {
   return {
+    version: 2,
     profile: {
       id: workerUser.id, full_name: workerUser.full_name, trade: 'Masonry worker', experience_years: 7,
       service_area: 'Raipur, Chhattisgarh', bio: 'Experienced with residential masonry and site preparation.',
@@ -51,17 +59,56 @@ function initialState(): DemoState {
     ],
     cases: [{ id: 'demo-case-asha-001', worker_id: workerUser.id, status: 'SUBMITTED', qualification_id: demoQualification.id,
       evidence: structuredClone(initialEvidence), decisions: {} }],
+    requests: [{ id: 'request-sample-001', customer_id: customerUser.id, customer_name: customerUser.full_name,
+      worker_id: workerUser.id, title: 'Repair a courtyard boundary wall', service_type: 'Masonry',
+      description: 'Repair loose bricks and restore a short section of the courtyard wall.', location: 'Raipur, Chhattisgarh',
+      preferred_date: '', status: 'REQUESTED', history: [{ status: 'REQUESTED', at: new Date().toISOString() }], review: null }],
     activeRole: null,
   }
+}
+
+const requestStatuses: DemoRequestStatus[] = ['REQUESTED', 'ACCEPTED', 'DECLINED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED']
+function normalizeRequest(value: unknown): DemoWorkRequest | null {
+  if (!value || typeof value !== 'object') return null
+  const item = value as Partial<DemoWorkRequest>
+  if (typeof item.id !== 'string' || typeof item.customer_id !== 'string' || typeof item.worker_id !== 'string'
+    || typeof item.customer_name !== 'string' || typeof item.description !== 'string' || typeof item.location !== 'string'
+    || typeof item.status !== 'string' || !requestStatuses.includes(item.status as DemoRequestStatus)) return null
+  const history = Array.isArray(item.history) ? item.history.filter(entry => entry && typeof entry.status === 'string'
+    && requestStatuses.includes(entry.status as DemoRequestStatus) && typeof entry.at === 'string')
+    .map(entry => ({ status: entry.status as DemoRequestStatus, at: entry.at })) : []
+  const review = item.review && Number.isInteger(item.review.rating) && item.review.rating >= 1 && item.review.rating <= 5
+    && typeof item.review.comment === 'string' ? item.review : null
+  return { id: item.id, customer_id: item.customer_id, customer_name: item.customer_name, worker_id: item.worker_id,
+    title: typeof item.title === 'string' ? item.title : item.description,
+    service_type: typeof item.service_type === 'string' ? item.service_type : '', description: item.description,
+    location: item.location, preferred_date: typeof item.preferred_date === 'string' ? item.preferred_date : '',
+    status: item.status as DemoRequestStatus, history, review }
 }
 
 let memoryState: DemoState | null = null
 function readState(): DemoState {
   try {
-    const saved = localStorage.getItem(storageKey)
+    const saved = typeof localStorage === 'undefined' ? null : localStorage.getItem(storageKey)
     if (saved) {
-      const parsed = JSON.parse(saved) as DemoState
-      if (parsed.profile && Array.isArray(parsed.cases) && Array.isArray(parsed.skills)) return parsed
+      const parsed = JSON.parse(saved) as Partial<DemoState>
+      const validProfile = !!parsed.profile && typeof parsed.profile.id === 'string' && typeof parsed.profile.full_name === 'string'
+        && typeof parsed.profile.trade === 'string' && typeof parsed.profile.service_area === 'string'
+        && typeof parsed.profile.bio === 'string' && typeof parsed.profile.experience_years === 'number'
+      const validSkills = Array.isArray(parsed.skills) && parsed.skills.every(skill => skill && typeof skill.id === 'string'
+        && typeof skill.name === 'string' && typeof skill.years_experience === 'number')
+      const validCases = Array.isArray(parsed.cases) && parsed.cases.every(item => item && typeof item.id === 'string'
+        && typeof item.worker_id === 'string' && typeof item.status === 'string' && typeof item.qualification_id === 'string'
+        && Array.isArray(item.evidence) && item.evidence.every(evidence => evidence && typeof evidence.id === 'string'
+          && typeof evidence.criterion_id === 'string' && typeof evidence.description === 'string')
+        && item.decisions && typeof item.decisions === 'object')
+      if (validProfile && validCases && validSkills) {
+        // Upgrade the previous local schema in memory without replacing user records.
+        return { ...initialState(), ...parsed, version: 2,
+          profile: parsed.profile!, skills: parsed.skills!, cases: parsed.cases!,
+          requests: Array.isArray(parsed.requests) ? parsed.requests.map(normalizeRequest).filter((request): request is DemoWorkRequest => request !== null) : [],
+          activeRole: ['worker', 'assessor', 'customer', 'admin'].includes(String(parsed.activeRole)) ? parsed.activeRole! : null }
+      }
     }
   } catch { /* Fall back to the in-memory demo state when storage is unavailable. */ }
   memoryState ??= initialState()
@@ -69,10 +116,10 @@ function readState(): DemoState {
 }
 function writeState(state: DemoState) {
   memoryState = state
-  try { localStorage.setItem(storageKey, JSON.stringify(state)) } catch { /* The current session still works in memory. */ }
+  try { if (typeof localStorage !== 'undefined') localStorage.setItem(storageKey, JSON.stringify(state)) } catch { /* The current session still works in memory. */ }
 }
 function currentUser(state = readState()): User | null {
-  return state.activeRole === 'worker' ? workerUser : state.activeRole === 'assessor' ? assessorUser : null
+  return state.activeRole === 'worker' ? workerUser : state.activeRole === 'assessor' ? assessorUser : state.activeRole === 'customer' ? customerUser : null
 }
 function requireRole(...roles: User['role'][]) {
   const state = readState()
@@ -115,11 +162,11 @@ function ensureDemoCase(state: DemoState, caseId: string) {
   return item
 }
 
-export function loginDemoRole(role: 'worker' | 'assessor') {
+export function loginDemoRole(role: 'worker' | 'assessor' | 'customer') {
   const state = readState()
   state.activeRole = role
   writeState(state)
-  return role === 'worker' ? workerUser : assessorUser
+  return role === 'worker' ? workerUser : role === 'assessor' ? assessorUser : customerUser
 }
 export function resetDemoState() {
   const next = initialState()
@@ -163,11 +210,85 @@ export async function demoApi<T>(path: string, options: RequestInit = {}): Promi
   }
   if (path === '/auth/logout' && method === 'POST') { state.activeRole = null; writeState(state); return undefined as T }
 
-  if (path === '/worker/requests' && method === 'GET') {
-    requireRole('worker')
-    // This local workspace has no customer request records. Return the real empty
-    // state so the worker page can render its empty-state UI without a fake API error.
-    return [] as T
+  const route = path.split('?')[0]
+  if (route === '/worker/requests' && method === 'GET') {
+    const { state: active, user } = requireRole('worker')
+    return active.requests.filter(request => request.worker_id === user.id).map(request => ({ ...request })) as T
+  }
+  if (route === '/customers/workers' && method === 'GET') {
+    const { state: active } = requireRole('customer')
+    const params = new URLSearchParams(path.split('?')[1] ?? '')
+    const q = (params.get('q') ?? '').toLocaleLowerCase()
+    const area = (params.get('area') ?? '').toLocaleLowerCase()
+    const verified = active.cases.some(item => item.worker_id === active.profile.id && item.status === 'VERIFIED')
+    const qualifications = verified ? [{ title: demoQualification.title, code: demoQualification.code, version: demoQualification.version,
+      source_name: demoQualification.source_name, source_url: demoQualification.source_url, official: false }] : []
+    const worker: Worker = { ...active.profile, skills: active.skills, verified_qualifications: qualifications }
+    const haystack = `${worker.trade} ${worker.skills.map(skill => skill.name).join(' ')}`.toLocaleLowerCase()
+    return worker.available && (!q || haystack.includes(q)) && (!area || worker.service_area.toLocaleLowerCase().includes(area)) ? [worker] as T : [] as T
+  }
+  if (route === '/customer/requests' && method === 'GET') {
+    const { state: active, user } = requireRole('customer')
+    return active.requests.filter(request => request.customer_id === user.id).map(request => ({
+      ...request, worker_name: active.profile.full_name, worker_trade: active.profile.trade,
+      worker_service_area: active.profile.service_area,
+    })) as T
+  }
+  if (route === '/customer/requests' && method === 'POST') {
+    const { state: active, user } = requireRole('customer')
+    if (data.worker_id !== active.profile.id || !active.profile.available) throw new ApiError('This worker is not available for requests.', 404)
+    const title = String(data.title ?? '').trim()
+    const serviceType = String(data.service_type ?? '').trim()
+    const description = String(data.description ?? '').trim()
+    const location = String(data.location ?? '').trim()
+    const preferredDate = String(data.preferred_date ?? '').trim()
+    if (title.length < 3 || title.length > 120) throw new ApiError('Enter a request title between 3 and 120 characters.', 422)
+    if (serviceType.length < 2 || serviceType.length > 80) throw new ApiError('Enter a service type between 2 and 80 characters.', 422)
+    if (description.length < 5 || description.length > 2000) throw new ApiError('Describe the work in 5 to 2,000 characters.', 422)
+    if (location.length < 2 || location.length > 200) throw new ApiError('Enter a job location between 2 and 200 characters.', 422)
+    if (preferredDate && !/^\d{4}-\d{2}-\d{2}$/.test(preferredDate)) throw new ApiError('Enter a valid preferred date.', 422)
+    if (active.requests.some(item => item.customer_id === user.id && item.worker_id === data.worker_id
+      && item.title === title && item.description === description && item.location === location
+      && ['REQUESTED', 'ACCEPTED', 'IN_PROGRESS'].includes(item.status))) throw new ApiError('A matching work request is already open.', 409)
+    const request: DemoWorkRequest = { id: `request-${crypto.randomUUID()}`, customer_id: user.id,
+      customer_name: user.full_name, worker_id: active.profile.id, title, service_type: serviceType, description,
+      location, preferred_date: preferredDate, status: 'REQUESTED', history: [{ status: 'REQUESTED', at: new Date().toISOString() }], review: null }
+    active.requests.unshift(request)
+    writeState(active)
+    return { ...request, worker_name: active.profile.full_name, worker_trade: active.profile.trade,
+      worker_service_area: active.profile.service_area } as T
+  }
+  const requestStatusMatch = path.match(/^\/requests\/([^/?]+)$/)
+  if (requestStatusMatch && method === 'PATCH') {
+    const { state: active, user } = requireRole('customer', 'worker')
+    const request = active.requests.find(item => item.id === requestStatusMatch[1])
+    if (!request || (user.role === 'customer' ? request.customer_id !== user.id : request.worker_id !== user.id)) throw new ApiError('Request not found', 404)
+    const next = data.status as DemoRequestStatus
+    const transitions: Record<DemoRequestStatus, DemoRequestStatus[]> = {
+      REQUESTED: user.role === 'worker' ? ['ACCEPTED', 'DECLINED'] : ['CANCELLED'],
+      ACCEPTED: user.role === 'worker' ? ['IN_PROGRESS'] : ['CANCELLED'],
+      IN_PROGRESS: user.role === 'worker' ? ['COMPLETED'] : [],
+      DECLINED: [], COMPLETED: [], CANCELLED: [],
+    }
+    if (!transitions[request.status]?.includes(next)) throw new ApiError('That status change is not allowed', 409)
+    request.status = next
+    request.history.push({ status: next, at: new Date().toISOString() })
+    writeState(active)
+    return { ...request } as T
+  }
+  const reviewMatch = path.match(/^\/customer\/requests\/([^/?]+)\/review$/)
+  if (reviewMatch && method === 'POST') {
+    const { state: active, user } = requireRole('customer')
+    const request = active.requests.find(item => item.id === reviewMatch[1] && item.customer_id === user.id)
+    if (!request) throw new ApiError('Request not found', 404)
+    if (request.status !== 'COMPLETED') throw new ApiError('Reviews are available after the service is completed', 409)
+    if (request.review) throw new ApiError('This request has already been reviewed', 409)
+    const rating = Number(data.rating)
+    const comment = String(data.comment ?? '').trim()
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5 || comment.length > 2000) throw new ApiError('Enter a rating from 1 to 5 and a comment under 2,000 characters.', 422)
+    request.review = { rating, comment }
+    writeState(active)
+    return { ...request.review } as T
   }
 
   if (path === '/worker/profile' && method === 'GET') {

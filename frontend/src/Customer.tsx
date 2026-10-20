@@ -1,35 +1,25 @@
 import { useEffect, useState } from 'react'
-import { api, json, Worker } from './api'
+import { api, json, Worker, WorkRequest } from './api'
 import { EmptyState, Feedback, LoadingState } from './ui'
 import { Localized } from './i18n'
-
-type Request = {
-  id: string
-  worker_id: string
-  worker_name: string
-  worker_trade: string
-  worker_service_area: string
-  description: string
-  location: string
-  status: string
-  review: { rating: number; comment: string } | null
-}
 
 const statusLabels: Record<string, string> = {
   REQUESTED: 'Awaiting worker response',
   ACCEPTED: 'Accepted',
   DECLINED: 'Declined',
+  IN_PROGRESS: 'In progress',
   COMPLETED: 'Completed',
   CANCELLED: 'Cancelled',
 }
 
 export default function Customer({ section }: { section: 'market' | 'requests' }) {
   const [workers, setWorkers] = useState<Worker[]>([])
-  const [requests, setRequests] = useState<Request[]>([])
+  const [requests, setRequests] = useState<WorkRequest[]>([])
   const [query, setQuery] = useState('')
   const [area, setArea] = useState('')
   const [appliedQuery, setAppliedQuery] = useState('')
   const [appliedArea, setAppliedArea] = useState('')
+  const [qualificationFilter, setQualificationFilter] = useState<'all' | 'verified' | 'declared'>('all')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [loading, setLoading] = useState(true)
@@ -42,7 +32,7 @@ export default function Customer({ section }: { section: 'market' | 'requests' }
       if (section === 'market') {
         setWorkers(await api(`/customers/workers?q=${encodeURIComponent(appliedQuery)}&area=${encodeURIComponent(appliedArea)}`))
       } else {
-        setRequests(await api('/customer/requests'))
+        setRequests(await api<WorkRequest[]>('/customer/requests'))
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load this page')
@@ -53,12 +43,23 @@ export default function Customer({ section }: { section: 'market' | 'requests' }
 
   useEffect(() => { void load() }, [section, appliedQuery, appliedArea])
 
+  useEffect(() => {
+    const refresh = (event: StorageEvent) => { if (event.key === 'craftrelay.sih-demo.v1') void load() }
+    window.addEventListener('storage', refresh)
+    return () => window.removeEventListener('storage', refresh)
+  }, [section, appliedQuery, appliedArea])
+
   async function submitRequest(worker: Worker, form: HTMLFormElement) {
     const data = new FormData(form)
     setError('')
     setNotice('')
+    const title = String(data.get('title') || '').trim()
+    const serviceType = String(data.get('service_type') || '').trim()
     const description = String(data.get('description') || '').trim()
     const location = String(data.get('location') || '').trim()
+    const preferredDate = String(data.get('preferred_date') || '').trim()
+    if (title.length < 3) { setError('Enter a request title with at least three characters'); return }
+    if (serviceType.length < 2) { setError('Enter a service type with at least two characters'); return }
     if (description.length < 5) {
       setError('Describe the work in at least five characters')
       return
@@ -71,7 +72,7 @@ export default function Customer({ section }: { section: 'market' | 'requests' }
     try {
       await api('/customer/requests', {
         method: 'POST',
-        body: json({ worker_id: worker.id, description, location }),
+        body: json({ worker_id: worker.id, title, service_type: serviceType, description, location, preferred_date: preferredDate }),
       })
       setNotice(`Request sent to ${worker.full_name}`)
       form.reset()
@@ -82,7 +83,7 @@ export default function Customer({ section }: { section: 'market' | 'requests' }
     }
   }
 
-  async function change(request: Request, status: string) {
+  async function change(request: WorkRequest, status: string) {
     setError('')
     setNotice('')
     setBusyId(request.id)
@@ -97,7 +98,7 @@ export default function Customer({ section }: { section: 'market' | 'requests' }
     }
   }
 
-  async function review(request: Request, form: HTMLFormElement) {
+  async function review(request: WorkRequest, form: HTMLFormElement) {
     const data = new FormData(form)
     setError('')
     setNotice('')
@@ -129,12 +130,13 @@ export default function Customer({ section }: { section: 'market' | 'requests' }
     <form className="search-row" onSubmit={event => { event.preventDefault(); setAppliedQuery(query.trim()); setAppliedArea(area.trim()) }}>
       <label><span>TRADE OR SKILL</span><input value={query} onChange={event => setQuery(event.target.value)} placeholder="e.g. carpentry, tailoring" /></label>
       <label><span>SERVICE AREA</span><input value={area} onChange={event => setArea(event.target.value)} placeholder="City or district" /></label>
+      <label><span>QUALIFICATION STATUS</span><select value={qualificationFilter} onChange={event => setQualificationFilter(event.target.value as typeof qualificationFilter)}><option value="all">All workers</option><option value="verified">Assessor-verified</option><option value="declared">No verified qualification</option></select></label>
       <button className="button primary" type="submit">Search <span aria-hidden="true">⌕</span></button>
     </form>
     {error && <Feedback>{error}</Feedback>}
     {notice && <Feedback tone="success">{notice}</Feedback>}
     <div className="worker-grid">
-      {workers.map(worker => <article className="worker-card" key={worker.id}>
+      {workers.filter(worker => qualificationFilter === 'all' || (qualificationFilter === 'verified' ? Array.isArray(worker.verified_qualifications) && worker.verified_qualifications.length > 0 : !Array.isArray(worker.verified_qualifications) || worker.verified_qualifications.length === 0)).map(worker => <article className="worker-card" key={worker.id}>
         <div className="worker-card-head">
           <span className="avatar large" aria-hidden="true">{worker.full_name.charAt(0).toUpperCase()}</span>
           <span className="verified-count">{Array.isArray(worker.verified_qualifications) ? worker.verified_qualifications.length : 0} verified</span>
@@ -153,10 +155,16 @@ export default function Customer({ section }: { section: 'market' | 'requests' }
         </div>)}
         {(!Array.isArray(worker.verified_qualifications) || worker.verified_qualifications.length === 0) && <p className="subtle">No verified qualifications listed. Profile skills are self-declared.</p>}
         <form className="contact-form" onSubmit={event => { event.preventDefault(); void submitRequest(worker, event.currentTarget) }}>
-          <label className="sr-only" htmlFor={`request-description-${worker.id}`}>Describe the work you need</label>
-          <input id={`request-description-${worker.id}`} name="description" required minLength={5} maxLength={2000} placeholder="What work do you need?" />
-          <label className="sr-only" htmlFor={`request-location-${worker.id}`}>Job location</label>
-          <input id={`request-location-${worker.id}`} name="location" required minLength={2} maxLength={200} placeholder="Job location" />
+          <label htmlFor={`request-title-${worker.id}`}>Request title</label>
+          <input id={`request-title-${worker.id}`} name="title" required minLength={3} maxLength={120} placeholder="e.g. Repair a courtyard wall" />
+          <label htmlFor={`request-type-${worker.id}`}>Service type</label>
+          <input id={`request-type-${worker.id}`} name="service_type" required minLength={2} maxLength={80} defaultValue={worker.trade} />
+          <label htmlFor={`request-description-${worker.id}`}>Describe the work</label>
+          <textarea id={`request-description-${worker.id}`} name="description" required minLength={5} maxLength={2000} placeholder="What work do you need?" rows={3} />
+          <label htmlFor={`request-location-${worker.id}`}>Job location</label>
+          <input id={`request-location-${worker.id}`} name="location" required minLength={2} maxLength={200} defaultValue={worker.service_area} placeholder="City or district" />
+          <label htmlFor={`request-date-${worker.id}`}>Preferred date (optional)</label>
+          <input id={`request-date-${worker.id}`} name="preferred_date" type="date" />
           <button className="button secondary full" disabled={busyId === worker.id}>{busyId === worker.id ? 'Sending…' : 'Send work request'} <span aria-hidden="true">→</span></button>
         </form>
         <p className="fine-print">A service review can be left after the work is marked complete.</p>
@@ -171,10 +179,14 @@ export default function Customer({ section }: { section: 'market' | 'requests' }
     {notice && <Feedback tone="success">{notice}</Feedback>}
     <div className="request-list">
       {requests.map(request => <article className="request-card" key={request.id}>
-        <div className="request-top"><span className="eyebrow">WORKER · {request.worker_name.toUpperCase()}</span><span className="status-tag">{statusLabels[request.status] || request.status}</span></div>
+        <div className="request-top"><span className="eyebrow">WORKER · {(request.worker_name ?? 'Worker').toUpperCase()}</span><span className="status-tag">{statusLabels[request.status] || request.status}</span></div>
         {(request.worker_trade || request.worker_service_area) && <p className="subtle">{request.worker_trade || 'Skilled worker'} · {request.worker_service_area || 'Area not specified'}</p>}
-        <h3>{request.description}</h3>
+        <h3>{request.title || request.description}</h3>
+        <p className="subtle">{request.service_type || request.worker_trade || 'Skilled worker'} · {request.worker_trade || 'Skilled worker'}</p>
+        <p>{request.description}</p>
         <p className="subtle">⌖ {request.location}</p>
+        {request.preferred_date && <p className="subtle">Preferred date: {request.preferred_date}</p>}
+        {request.history && request.history.length > 0 && <ol className="request-history" aria-label="Request status history">{request.history.map((entry, index) => <li key={`${entry.status}-${index}`}>{statusLabels[entry.status] || entry.status.replace('_', ' ')}</li>)}</ol>}
         {(request.status === 'REQUESTED' || request.status === 'ACCEPTED') && <button className="text-button danger-text" disabled={busyId === request.id} onClick={() => void change(request, 'CANCELLED')}>Cancel request</button>}
         {request.status === 'COMPLETED' && !request.review && <form className="review-form" onSubmit={event => { event.preventDefault(); void review(request, event.currentTarget) }}>
           <label>Service rating<select name="rating" defaultValue="5"><option value="5">5 — Great</option><option value="4">4 — Good</option><option value="3">3 — Okay</option><option value="2">2 — Poor</option><option value="1">1 — Bad</option></select></label>

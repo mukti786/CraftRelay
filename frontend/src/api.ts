@@ -50,7 +50,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   return response.json() as Promise<T>
 }
 export const json = (value: unknown) => JSON.stringify(value)
-export async function demoLogin(role: 'worker' | 'assessor') {
+export async function demoLogin(role: 'worker' | 'assessor' | 'customer') {
   if (!DEMO_MODE) throw new Error('Demo sign-in is only available in demo mode')
   const module = await import('./demo')
   return module.loginDemoRole(role)
@@ -61,6 +61,12 @@ export async function resetDemoData() {
   module.resetDemoState()
 }
 export type User = { id: string; email: string; full_name: string; role: 'worker' | 'assessor' | 'customer' | 'admin' }
+export type WorkRequest = {
+  id: string; customer_id?: string; customer_name?: string; worker_id?: string; worker_name?: string
+  worker_trade?: string; worker_service_area?: string; title?: string; service_type?: string
+  description: string; location: string; preferred_date?: string; status: string
+  history?: { status: string; at: string }[]; review?: { rating: number; comment: string } | null
+}
 export type Qualification = { id: string; code: string; version: string; title: string; source_name: string; source_url: string; official: boolean; criterion_count?: number }
 export type Criterion = { id: string; code: string; description: string; mandatory: boolean; requires_practical: boolean; evidence_count?: number }
 export type Worker = { id: string; full_name: string; trade: string; experience_years: number; service_area: string; bio: string; available: boolean; skills: {id:string;name:string;years_experience:number}[]; verified_qualifications: number | {title:string;code:string;version:string;source_name:string;source_url:string;official:boolean}[] }

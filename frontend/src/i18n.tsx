@@ -231,6 +231,17 @@ const english = {
   'AI assistance is not available in this workspace.': 'AI assistance is not available in this workspace.',
   'AI assistance is unavailable in this workspace. Continue with manual review.': 'AI assistance is unavailable in this workspace. Continue with manual review.',
   'CraftRelay · Proven skills. Trusted services.': 'CraftRelay · Proven skills. Trusted services.',
+  'Sample customer account · Meera Singh': 'Sample customer account · Meera Singh',
+  'Choose a workspace to explore.': 'Choose a workspace to explore.',
+  'Request title': 'Request title', 'Service type': 'Service type', 'Describe the work': 'Describe the work',
+  'Preferred date (optional)': 'Preferred date (optional)', 'All workers': 'All workers', 'Assessor-verified': 'Assessor-verified',
+  'No verified qualification': 'No verified qualification', 'In progress': 'In progress', 'Start service': 'Start service',
+  'Service marked in progress': 'Service marked in progress', 'Enter a request title with at least three characters': 'Enter a request title with at least three characters',
+  'Enter a service type with at least two characters': 'Enter a service type with at least two characters',
+  'Request status history': 'Request status history',
+  'A matching work request is already open.': 'A matching work request is already open.', 'Enter a valid preferred date.': 'Enter a valid preferred date.',
+  'Customer login': 'Customer login', 'QUALIFICATION STATUS': 'QUALIFICATION STATUS',
+  'Preferred date:': 'Preferred date:', 'e.g. Repair a courtyard wall': 'e.g. Repair a courtyard wall',
 } as const
 
 const hindi: Record<keyof typeof english, string> = {
@@ -423,6 +434,17 @@ const hindi: Record<keyof typeof english, string> = {
   'AI assistance is not available in this workspace.': 'इस कार्यस्थल में AI सहायता उपलब्ध नहीं है।',
   'AI assistance is unavailable in this workspace. Continue with manual review.': 'AI सहायता उपलब्ध नहीं है। मैन्युअल समीक्षा जारी रखें।',
   'CraftRelay · Proven skills. Trusted services.': 'CraftRelay · प्रमाणित कौशल। भरोसेमंद सेवाएँ।',
+  'Sample customer account · Meera Singh': 'नमूना ग्राहक खाता · मीरा सिंह',
+  'Choose a workspace to explore.': 'देखने के लिए कार्यस्थल चुनें।',
+  'Request title': 'अनुरोध का शीर्षक', 'Service type': 'सेवा का प्रकार', 'Describe the work': 'काम का विवरण दें',
+  'Preferred date (optional)': 'पसंदीदा तारीख (वैकल्पिक)', 'All workers': 'सभी कामगार', 'Assessor-verified': 'मूल्यांकनकर्ता द्वारा सत्यापित',
+  'No verified qualification': 'कोई सत्यापित योग्यता नहीं', 'In progress': 'काम जारी है', 'Start service': 'सेवा शुरू करें',
+  'Service marked in progress': 'सेवा जारी चिह्नित हुई', 'Enter a request title with at least three characters': 'कम से कम तीन अक्षरों का अनुरोध शीर्षक लिखें',
+  'Enter a service type with at least two characters': 'कम से कम दो अक्षरों का सेवा प्रकार लिखें',
+  'Request status history': 'अनुरोध स्थिति का इतिहास',
+  'A matching work request is already open.': 'ऐसा ही एक काम अनुरोध पहले से खुला है।', 'Enter a valid preferred date.': 'मान्य पसंदीदा तारीख लिखें।',
+  'Customer login': 'ग्राहक प्रवेश', 'QUALIFICATION STATUS': 'योग्यता स्थिति',
+  'Preferred date:': 'पसंदीदा तारीख:', 'e.g. Repair a courtyard wall': 'जैसे, आँगन की दीवार की मरम्मत',
 }
 
 const draft: Partial<Record<keyof typeof english, string>> = {

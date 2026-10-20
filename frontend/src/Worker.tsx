@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react'
-import { api, json, upload, Criterion, Qualification, Worker as WorkerProfile, DEMO_MODE } from './api'
+import { api, json, upload, Criterion, Qualification, Worker as WorkerProfile, WorkRequest, DEMO_MODE } from './api'
 import { EmptyState, Feedback, LoadingState } from './ui'
 import { Localized } from './i18n'
 
@@ -41,14 +41,12 @@ type Case = {
 }
 
 type QualificationDetails = Qualification & { criteria: Criterion[] }
-type RequestRow = { id: string; customer_name: string; description: string; location: string; status: string }
-
 export default function Worker({ section }: { section: 'profile' | 'assessment' | 'requests' }) {
   const [profile, setProfile] = useState<WorkerProfile | null>(null)
   const [quals, setQuals] = useState<Qualification[]>([])
   const [selectedQualification, setSelectedQualification] = useState<QualificationDetails | null>(null)
   const [cases, setCases] = useState<Case[]>([])
-  const [requests, setRequests] = useState<RequestRow[]>([])
+  const [requests, setRequests] = useState<WorkRequest[]>([])
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -67,7 +65,7 @@ export default function Worker({ section }: { section: 'profile' | 'assessment' 
         setQuals(catalogue)
         setCases(workerCases)
       }
-      if (section === 'requests') setRequests(await api('/worker/requests'))
+      if (section === 'requests') setRequests(await api<WorkRequest[]>('/worker/requests'))
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not load workspace')
     } finally {
@@ -76,6 +74,11 @@ export default function Worker({ section }: { section: 'profile' | 'assessment' 
   }
 
   useEffect(() => { void load() }, [section])
+  useEffect(() => {
+    const refresh = (event: StorageEvent) => { if (event.key === 'craftrelay.sih-demo.v1') void load(true) }
+    window.addEventListener('storage', refresh)
+    return () => window.removeEventListener('storage', refresh)
+  }, [section])
 
   async function action(fn: () => Promise<unknown>, message: string): Promise<boolean> {
     setBusy(true)
@@ -214,12 +217,16 @@ export default function Worker({ section }: { section: 'profile' | 'assessment' 
     <div className="page-heading"><div><p className="eyebrow">CUSTOMER CONNECTIONS</p><h1>Work requests</h1><p className="subtle">Respond to requests and keep service status up to date.</p></div></div>
     {error && <Feedback>{error}</Feedback>}{notice && <Feedback tone="success">{notice}</Feedback>}
     <div className="request-list">{requests.map(request => <article className="request-card" key={request.id}>
-      <div className="request-top"><span className="eyebrow">REQUEST FROM {request.customer_name.toUpperCase()}</span><span className="status-tag">{request.status.replace('_', ' ')}</span></div>
-      <h3>{request.description}</h3><p className="subtle">⌖ {request.location}</p>
+      <div className="request-top"><span className="eyebrow">REQUEST FROM {(request.customer_name ?? 'Customer').toUpperCase()}</span><span className="status-tag">{request.status.replace('_', ' ')}</span></div>
+      <h3>{request.title || request.description}</h3><p className="subtle">{request.service_type ? `${request.service_type} · ` : ''}⌖ {request.location}</p><p>{request.description}</p>
+      {request.preferred_date && <p className="subtle">Preferred date: {request.preferred_date}</p>}
+      {request.history && <ol className="request-history" aria-label="Request status history">{request.history.map((entry, index) => <li key={`${entry.status}-${index}`}>{entry.status.replace('_', ' ')}</li>)}</ol>}
       <div className="request-actions">
         {request.status === 'REQUESTED' && <><button className="button primary small-button" disabled={busy} onClick={() => void action(() => api(`/requests/${request.id}`, { method: 'PATCH', body: json({ status: 'ACCEPTED' }) }), 'Request accepted')}>Accept request</button>
           <button className="button secondary small-button" disabled={busy} onClick={() => void action(() => api(`/requests/${request.id}`, { method: 'PATCH', body: json({ status: 'DECLINED' }) }), 'Request declined')}>Decline</button></>}
-        {request.status === 'ACCEPTED' && <button className="button primary small-button" disabled={busy} onClick={() => void action(() => api(`/requests/${request.id}`, { method: 'PATCH', body: json({ status: 'COMPLETED' }) }), 'Request marked complete')}>Mark service complete</button>}
+        {request.status === 'ACCEPTED' && DEMO_MODE && <button className="button primary small-button" disabled={busy} onClick={() => void action(() => api(`/requests/${request.id}`, { method: 'PATCH', body: json({ status: 'IN_PROGRESS' }) }), 'Service marked in progress')}>Start service</button>}
+        {request.status === 'ACCEPTED' && !DEMO_MODE && <button className="button primary small-button" disabled={busy} onClick={() => void action(() => api(`/requests/${request.id}`, { method: 'PATCH', body: json({ status: 'COMPLETED' }) }), 'Request marked complete')}>Mark service complete</button>}
+        {request.status === 'IN_PROGRESS' && <button className="button primary small-button" disabled={busy} onClick={() => void action(() => api(`/requests/${request.id}`, { method: 'PATCH', body: json({ status: 'COMPLETED' }) }), 'Request marked complete')}>Mark service complete</button>}
       </div>
     </article>)}{!requests.length && <EmptyState icon="↗" title="No work requests yet" description="Requests from customers will appear here." />}</div>
   </></Localized>

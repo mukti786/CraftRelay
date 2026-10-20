@@ -446,3 +446,14 @@ td b{color:var(--color-text)}
   .page-foot{margin-top:24px}
 }
 @media(max-width:380px){.nav-item{font-size:12px;padding-inline:2px}.locale-select{max-width:110px}.content{padding-inline:12px}.demo-landing .demo-hero{padding:22px 16px}.preview-steps{grid-template-columns:1fr}.preview-steps>span{font-size:13px}}
+
+/* Work request fields and status history follow the shared flat design tokens. */
+.search-row{grid-template-columns:repeat(3,minmax(0,1fr)) auto;box-shadow:none}
+.search-row select,.contact-form textarea{width:100%;min-height:44px;border:1px solid var(--color-border);border-radius:var(--radius-small);padding:10px 12px;background:var(--color-muted-bg);color:var(--color-text)}
+.contact-form{gap:8px}
+.contact-form label{font-size:14px;font-weight:600;color:var(--color-secondary)}
+.contact-form input,.contact-form textarea{font-size:15px;line-height:1.5}
+.request-card>p:not(.subtle){line-height:1.55}
+.request-history{display:flex;flex-wrap:wrap;gap:8px;list-style:none;padding:0;margin:12px 0;color:var(--color-secondary);font-size:13px}
+.request-history li{padding:5px 9px;background:var(--color-muted-bg);border-radius:var(--radius-small)}
+@media(max-width:700px){.search-row{grid-template-columns:minmax(0,1fr)}.contact-form .button{width:100%}}
