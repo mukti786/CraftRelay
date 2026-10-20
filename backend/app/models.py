@@ -204,6 +204,29 @@ class CriterionDecision(Base):
     )
 
 
+class EvidenceAssistanceSuggestion(Base):
+    __tablename__ = "evidence_assistance_suggestions"
+    __table_args__ = (Index("ix_ai_suggestion_case_requested", "case_id", "request_at"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    case_id: Mapped[str] = mapped_column(
+        ForeignKey("assessment_cases.id", ondelete="CASCADE"), index=True
+    )
+    assessor_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    qualification_id: Mapped[str] = mapped_column(ForeignKey("qualifications.id"))
+    qualification_version: Mapped[str] = mapped_column(String(40))
+    provider_id: Mapped[str] = mapped_column(String(100))
+    model_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    template_version: Mapped[str] = mapped_column(String(40))
+    evidence_ids: Mapped[str] = mapped_column(Text)
+    criterion_ids: Mapped[str] = mapped_column(Text)
+    original_output: Mapped[str] = mapped_column(Text)
+    edited_output: Mapped[str | None] = mapped_column(Text, nullable=True)
+    disposition: Mapped[str] = mapped_column(String(20), default="PENDING")
+    disposition_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    request_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    response_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class Competency(Base):
     __tablename__ = "competencies"
     __table_args__ = (

@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import secrets
@@ -20,11 +21,22 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pwdlib import PasswordHash
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, ValidationError, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai_assistance import (
+    AssistanceContext,
+    AssistanceRateLimited,
+    AssistanceRefused,
+    AssistanceTimeout,
+    AssistanceUnavailable,
+    ProviderRegistry,
+    ProviderResult,
+    SuggestionOutput,
+    validate_scope,
+)
 from app.db import engine, get_db
 from app.models import (
     ApprovedTask,
@@ -36,6 +48,7 @@ from app.models import (
     CustomerReview,
     DeclaredSkill,
     Evidence,
+    EvidenceAssistanceSuggestion,
     PracticalTaskAttempt,
     PracticalTaskAttemptReview,
     Qualification,
@@ -46,6 +59,9 @@ from app.models import (
 from app.settings import get_settings
 
 settings = get_settings()
+ai_provider = ProviderRegistry(settings.ai_assistance_provider)
+AI_TEMPLATE_VERSION = "assessor-evidence-v1"
+AI_REQUEST_TIMEOUT_SECONDS = 20
 
 
 @asynccontextmanager
@@ -200,6 +216,34 @@ class PracticalTaskReviewInput(BaseModel):
         if len(notes) < 3:
             raise ValueError("Please provide a clear task review note")
         return notes
+
+
+class AssistanceRequestInput(BaseModel):
+    evidence_ids: list[str] = Field(min_length=1, max_length=20)
+    criterion_ids: list[str] = Field(min_length=1, max_length=30)
+
+    @field_validator("evidence_ids", "criterion_ids")
+    @classmethod
+    def require_unique_ids(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("Duplicate evidence or criterion identifiers are not allowed")
+        if any(not item or len(item) > 36 for item in value):
+            raise ValueError("Invalid identifier")
+        return value
+
+
+class AssistanceDispositionInput(BaseModel):
+    disposition: str = Field(pattern="^(ACCEPTED|EDITED|DISMISSED)$")
+    edited_output: SuggestionOutput | None = None
+
+    @field_validator("edited_output")
+    @classmethod
+    def edited_output_required_for_edit(cls, value, info):
+        if info.data.get("disposition") == "EDITED" and value is None:
+            raise ValueError("Provide the edited suggestion when recording an edit")
+        if info.data.get("disposition") != "EDITED" and value is not None:
+            raise ValueError("Edited content is only accepted with the EDITED disposition")
+        return value
 
 
 class UserStatusInput(BaseModel):
@@ -1101,6 +1145,219 @@ async def assessor_cases(
             }
         )
     return out
+
+
+def assistance_record(item: EvidenceAssistanceSuggestion):
+    return {
+        "id": item.id,
+        "case_id": item.case_id,
+        "qualification_id": item.qualification_id,
+        "qualification_version": item.qualification_version,
+        "provider_id": item.provider_id,
+        "model_id": item.model_id,
+        "template_version": item.template_version,
+        "evidence_ids": json.loads(item.evidence_ids),
+        "criterion_ids": json.loads(item.criterion_ids),
+        "original_output": json.loads(item.original_output),
+        "edited_output": json.loads(item.edited_output) if item.edited_output else None,
+        "disposition": item.disposition,
+        "disposition_at": item.disposition_at.isoformat() if item.disposition_at else None,
+        "request_at": item.request_at.isoformat(),
+        "response_at": item.response_at.isoformat(),
+        "label": "Unverified AI suggestion — not a competency decision",
+    }
+
+
+@app.get("/api/assessor/ai-assistance")
+async def assessor_ai_assistance_status(user: User = Depends(require("assessor"))):
+    return {
+        "available": ai_provider.available,
+        "provider": settings.ai_assistance_provider if ai_provider.available else None,
+        "reason": None if ai_provider.available else ai_provider.unavailable_reason,
+        "manual_review_available": True,
+    }
+
+
+async def authorized_assessor_case(case_id: str, db: AsyncSession) -> AssessmentCase:
+    case = await db.get(AssessmentCase, case_id)
+    if not case or case.status not in {"SUBMITTED", "IN_REVIEW", "VERIFIED"}:
+        raise HTTPException(404, "Assessment case not found")
+    return case
+
+
+@app.get("/api/assessor/cases/{case_id}/ai-suggestions")
+async def list_ai_suggestions(
+    case_id: str,
+    user: User = Depends(require("assessor")),
+    db: AsyncSession = Depends(get_db),
+):
+    await authorized_assessor_case(case_id, db)
+    suggestions = (
+        await db.scalars(
+            select(EvidenceAssistanceSuggestion)
+            .where(EvidenceAssistanceSuggestion.case_id == case_id)
+            .order_by(EvidenceAssistanceSuggestion.request_at)
+        )
+    ).all()
+    return [assistance_record(item) for item in suggestions]
+
+
+@app.post("/api/assessor/cases/{case_id}/ai-suggestions")
+async def request_ai_suggestion(
+    case_id: str,
+    payload: AssistanceRequestInput,
+    user: User = Depends(require("assessor")),
+    db: AsyncSession = Depends(get_db),
+):
+    case = await authorized_assessor_case(case_id, db)
+    if case.status == "VERIFIED":
+        raise HTTPException(409, "A finalized case cannot request new assistance")
+    qualification = await db.get(Qualification, case.qualification_id)
+    criteria = (
+        await db.scalars(
+            select(Criterion).where(
+                Criterion.qualification_id == case.qualification_id,
+                Criterion.id.in_(payload.criterion_ids),
+            )
+        )
+    ).all()
+    evidence = (
+        await db.scalars(
+            select(Evidence).where(
+                Evidence.case_id == case.id,
+                Evidence.id.in_(payload.evidence_ids),
+            )
+        )
+    ).all()
+    if len(criteria) != len(payload.criterion_ids):
+        raise HTTPException(422, "A selected criterion is outside this qualification version")
+    if len(evidence) != len(payload.evidence_ids):
+        raise HTTPException(422, "A selected evidence item is outside this case")
+    if any(item.criterion_id not in set(payload.criterion_ids) for item in evidence):
+        raise HTTPException(422, "Selected evidence must belong to a selected criterion")
+    context = AssistanceContext(
+        case_id=case.id,
+        qualification_id=qualification.id,
+        qualification_code=qualification.code,
+        qualification_version=qualification.version,
+        qualification_title=qualification.title,
+        criteria=[
+            {
+                "id": item.id,
+                "code": item.code,
+                "description": item.description,
+                "mandatory": item.mandatory,
+                "requires_practical": item.requires_practical,
+            }
+            for item in criteria
+        ],
+        evidence=[
+            {"id": item.id, "criterion_id": item.criterion_id, "description": item.description}
+            for item in evidence
+        ],
+    )
+    if len(context.model_dump_json()) > 50_000:
+        raise HTTPException(413, "Selected review context exceeds the assistance request limit")
+    if not ai_provider.available:
+        raise HTTPException(503, ai_provider.unavailable_reason)
+    requested_at = datetime.now(UTC)
+    try:
+        raw_result = await asyncio.wait_for(
+            ai_provider.generate(context), timeout=AI_REQUEST_TIMEOUT_SECONDS
+        )
+        result = ProviderResult.model_validate(raw_result)
+        if len(result.model_dump_json()) > 50_000:
+            raise ValueError("Provider response exceeds the configured response limit")
+        validate_scope(result.output, payload.evidence_ids, payload.criterion_ids)
+    except AssistanceUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except (TimeoutError, AssistanceTimeout) as exc:
+        raise HTTPException(
+            504, "AI assistance timed out. Continue the manual assessment."
+        ) from exc
+    except AssistanceRateLimited as exc:
+        raise HTTPException(
+            429, "AI assistance is temporarily rate limited. Continue manually."
+        ) from exc
+    except AssistanceRefused as exc:
+        raise HTTPException(
+            422, "The provider declined this request. Continue the manual assessment."
+        ) from exc
+    except (ValidationError, ValueError, TypeError) as exc:
+        raise HTTPException(
+            502, "AI assistance returned an invalid or out-of-scope response."
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(502, "AI assistance failed. Continue the manual assessment.") from exc
+
+    response_at = datetime.now(UTC)
+    record = EvidenceAssistanceSuggestion(
+        case_id=case.id,
+        assessor_id=user.id,
+        qualification_id=qualification.id,
+        qualification_version=qualification.version,
+        provider_id=result.provider_id,
+        model_id=result.model_id,
+        template_version=result.template_version,
+        evidence_ids=json.dumps(payload.evidence_ids),
+        criterion_ids=json.dumps(payload.criterion_ids),
+        original_output=result.output.model_dump_json(),
+        request_at=requested_at,
+        response_at=response_at,
+    )
+    db.add(record)
+    await db.flush()
+    await audit(
+        db,
+        user,
+        "assessor.ai_suggestion.created",
+        "evidence_assistance_suggestion",
+        record.id,
+        {"case_id": case.id, "evidence_ids": payload.evidence_ids},
+    )
+    await db.commit()
+    return assistance_record(record)
+
+
+@app.patch("/api/assessor/cases/{case_id}/ai-suggestions/{suggestion_id}")
+async def record_ai_suggestion_disposition(
+    case_id: str,
+    suggestion_id: str,
+    payload: AssistanceDispositionInput,
+    user: User = Depends(require("assessor")),
+    db: AsyncSession = Depends(get_db),
+):
+    case = await authorized_assessor_case(case_id, db)
+    if case.status == "VERIFIED":
+        raise HTTPException(409, "A finalized case does not accept suggestion dispositions")
+    suggestion = await db.get(EvidenceAssistanceSuggestion, suggestion_id)
+    if not suggestion or suggestion.case_id != case.id:
+        raise HTTPException(404, "AI suggestion not found")
+    if suggestion.disposition != "PENDING":
+        raise HTTPException(409, "This suggestion already has a recorded disposition")
+    allowed_evidence = json.loads(suggestion.evidence_ids)
+    SuggestionOutput.model_validate_json(suggestion.original_output)
+    allowed_criteria = json.loads(suggestion.criterion_ids)
+    if payload.disposition == "EDITED":
+        try:
+            validate_scope(payload.edited_output, allowed_evidence, list(allowed_criteria))
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(
+                422, "Edited suggestion references evidence or criteria outside its scope"
+            ) from exc
+        suggestion.edited_output = payload.edited_output.model_dump_json()
+    suggestion.disposition = payload.disposition
+    suggestion.disposition_at = datetime.now(UTC)
+    await audit(
+        db,
+        user,
+        "assessor.ai_suggestion.disposition_recorded",
+        "evidence_assistance_suggestion",
+        suggestion.id,
+        {"case_id": case.id, "disposition": payload.disposition},
+    )
+    await db.commit()
+    return assistance_record(suggestion)
 
 
 @app.patch("/api/assessor/evidence/{evidence_id}")

@@ -11,6 +11,13 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 import app.db as dbmod
 from app import bootstrap, main
+from app.ai_assistance import (
+    AssistanceRateLimited,
+    AssistanceRefused,
+    AssistanceTimeout,
+    ProviderResult,
+    SuggestionOutput,
+)
 from app.db import get_db
 from app.main import app
 from app.models import (
@@ -21,6 +28,7 @@ from app.models import (
     CriterionDecision,
     DeclaredSkill,
     Evidence,
+    EvidenceAssistanceSuggestion,
     PracticalTaskAttempt,
     PracticalTaskAttemptReview,
     Qualification,
@@ -1580,6 +1588,363 @@ def _upload_case_evidence(client, case_id: str, criterion_id: str, label: str):
     )
     assert response.status_code == 200, response.text
     return response.json()["id"]
+
+
+class _TestAssistanceProvider:
+    def __init__(self, result=None, error=None, delay=0):
+        self.result = result
+        self.error = error
+        self.delay = delay
+        self.contexts = []
+
+    async def generate(self, context):
+        self.contexts.append(context)
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        if self.error:
+            raise self.error
+        return self.result
+
+
+def _suggestion_result(criterion_id, evidence_id, summary="Fixture suggestion"):
+    return ProviderResult(
+        provider_id="test-adapter",
+        model_id="test-only",
+        template_version="test-template-v1",
+        output=SuggestionOutput(
+            summary=summary,
+            mappings=[
+                {
+                    "criterion_id": criterion_id,
+                    "evidence_ids": [evidence_id],
+                    "rationale": "The selected evidence description may relate to this criterion.",
+                }
+            ],
+            gaps=["Assessor should inspect the source file."],
+            uncertainty="The text description cannot establish competency.",
+            limitations=["Test adapter only; this is not a live provider result."],
+            evidence_references=[{"evidence_id": evidence_id, "note": "Selected case item."}],
+        ),
+    )
+
+
+def test_ai_assistance_unavailable_is_truthful_and_manual_assessment_remains_available(client):
+    _worker_id, case_id, criterion_id, _, assessor_email = _prepare_assessor_case(
+        client, "AI-UNAVAILABLE"
+    )
+    evidence_id = _upload_case_evidence(client, case_id, criterion_id, "manual")
+    assert client.post(f"/api/worker/cases/{case_id}/submit").status_code == 200
+    status = client.get("/api/assessor/ai-assistance")
+    assert status.status_code == 403
+    assert main.ai_provider.available is False
+    assert (
+        client.post(
+            f"/api/assessor/cases/{case_id}/ai-suggestions",
+            json={"evidence_ids": [evidence_id], "criterion_ids": [criterion_id]},
+        ).status_code
+        == 403
+    )
+    assert client.get(f"/api/assessor/cases/{case_id}/ai-suggestions").status_code == 403
+    assert (
+        client.patch(
+            f"/api/assessor/cases/{case_id}/ai-suggestions/not-owned",
+            json={"disposition": "DISMISSED"},
+        ).status_code
+        == 403
+    )
+
+    _login(client, assessor_email, "secure-assessor-pass")
+    status = client.get("/api/assessor/ai-assistance")
+    assert status.status_code == 200
+    assert status.json() == {
+        "available": False,
+        "provider": None,
+        "reason": "No AI assistance provider is configured. Continue the manual assessment.",
+        "manual_review_available": True,
+    }
+    denied_generation = client.post(
+        f"/api/assessor/cases/{case_id}/ai-suggestions",
+        json={"evidence_ids": [evidence_id], "criterion_ids": [criterion_id]},
+    )
+    assert denied_generation.status_code == 503
+    assert "Continue the manual assessment" in denied_generation.json()["detail"]
+
+    assert (
+        client.put(
+            f"/api/assessor/cases/{case_id}/criteria/{criterion_id}",
+            json={"result": "NOT_YET", "notes": "Manual assessment remains available."},
+        ).status_code
+        == 200
+    )
+    assert client.get(f"/api/assessor/cases/{case_id}/ai-suggestions").json() == []
+
+
+def test_ai_suggestion_scope_provenance_dispositions_and_decision_separation(client):
+    _worker_id, case_id, criterion_id, unrelated_criterion_id, assessor_email = (
+        _prepare_assessor_case(client, "AI-SCOPE")
+    )
+    evidence_id = _upload_case_evidence(client, case_id, criterion_id, "scoped")
+    assert client.post(f"/api/worker/cases/{case_id}/submit").status_code == 200
+    _login(client, assessor_email, "secure-assessor-pass")
+
+    assert client.get("/api/assessor/ai-assistance").status_code == 200
+    assert (
+        client.post(
+            f"/api/assessor/cases/{case_id}/ai-suggestions",
+            json={"evidence_ids": ["not-in-case"], "criterion_ids": [criterion_id]},
+        ).status_code
+        == 422
+    )
+
+    provider = _TestAssistanceProvider(_suggestion_result(criterion_id, evidence_id))
+    previous = main.ai_provider.provider
+    main.ai_provider.provider = provider
+    try:
+        generated = client.post(
+            f"/api/assessor/cases/{case_id}/ai-suggestions",
+            json={"evidence_ids": [evidence_id], "criterion_ids": [criterion_id]},
+        )
+        assert generated.status_code == 200, generated.text
+        record = generated.json()
+        assert record["label"] == "Unverified AI suggestion — not a competency decision"
+        assert record["qualification_version"] == "2026.1"
+        assert record["provider_id"] == "test-adapter" and record["model_id"] == "test-only"
+        assert record["evidence_ids"] == [evidence_id]
+        assert provider.contexts[0].case_id == case_id
+        assert {item["id"] for item in provider.contexts[0].evidence} == {evidence_id}
+        assert "stored_name" not in repr(provider.contexts[0])
+
+        assert (
+            client.put(
+                f"/api/assessor/cases/{case_id}/criteria/{criterion_id}",
+                json={"result": "NOT_YET", "notes": "Human decision before acknowledgement."},
+            ).status_code
+            == 200
+        )
+
+        async def decision_snapshot():
+            async with dbmod.SessionLocal() as session:
+                decision = await session.scalar(
+                    select(CriterionDecision).where(CriterionDecision.case_id == case_id)
+                )
+                competency_count = await session.scalar(
+                    select(func.count()).select_from(Competency)
+                )
+                return decision.result, decision.notes, competency_count
+
+        before = asyncio.run(decision_snapshot())
+
+        changed_output = record["original_output"] | {"summary": "Assessor-edited text."}
+        edited = client.patch(
+            f"/api/assessor/cases/{case_id}/ai-suggestions/{record['id']}",
+            json={"disposition": "EDITED", "edited_output": changed_output},
+        )
+        assert edited.status_code == 200, edited.text
+        edited_record = edited.json()
+        assert edited_record["disposition"] == "EDITED"
+        assert edited_record["original_output"]["summary"] == "Fixture suggestion"
+        assert edited_record["edited_output"]["summary"] == "Assessor-edited text."
+        assert (
+            edited_record["original_output"]["mappings"]
+            == edited_record["edited_output"]["mappings"]
+        )
+        assert (
+            client.patch(
+                f"/api/assessor/cases/{case_id}/ai-suggestions/{record['id']}",
+                json={"disposition": "ACCEPTED"},
+            ).status_code
+            == 409
+        )
+
+        provider.result = _suggestion_result(criterion_id, evidence_id, "Separate disposition")
+        accepted = client.post(
+            f"/api/assessor/cases/{case_id}/ai-suggestions",
+            json={"evidence_ids": [evidence_id], "criterion_ids": [criterion_id]},
+        ).json()
+        dismissed = client.post(
+            f"/api/assessor/cases/{case_id}/ai-suggestions",
+            json={"evidence_ids": [evidence_id], "criterion_ids": [criterion_id]},
+        ).json()
+        bad_edit_output = accepted["original_output"] | {
+            "mappings": [
+                {
+                    "criterion_id": unrelated_criterion_id,
+                    "evidence_ids": [evidence_id],
+                    "rationale": "Out-of-scope criterion.",
+                }
+            ]
+        }
+        assert (
+            client.patch(
+                f"/api/assessor/cases/{case_id}/ai-suggestions/{accepted['id']}",
+                json={"disposition": "EDITED", "edited_output": bad_edit_output},
+            ).status_code
+            == 422
+        )
+        assert (
+            client.patch(
+                f"/api/assessor/cases/{case_id}/ai-suggestions/{accepted['id']}",
+                json={"disposition": "ACCEPTED"},
+            ).json()["disposition"]
+            == "ACCEPTED"
+        )
+        assert (
+            client.patch(
+                f"/api/assessor/cases/{case_id}/ai-suggestions/{dismissed['id']}",
+                json={"disposition": "DISMISSED"},
+            ).json()["disposition"]
+            == "DISMISSED"
+        )
+
+        invalid_result = _suggestion_result(unrelated_criterion_id, evidence_id)
+        provider.result = invalid_result
+        invalid_criterion = client.post(
+            f"/api/assessor/cases/{case_id}/ai-suggestions",
+            json={"evidence_ids": [evidence_id], "criterion_ids": [criterion_id]},
+        )
+        assert invalid_criterion.status_code == 502
+
+        provider.result = _suggestion_result(criterion_id, "invented-evidence")
+        invalid_evidence = client.post(
+            f"/api/assessor/cases/{case_id}/ai-suggestions",
+            json={"evidence_ids": [evidence_id], "criterion_ids": [criterion_id]},
+        )
+        assert invalid_evidence.status_code == 502
+
+        assert asyncio.run(decision_snapshot()) == before
+
+        async def records_and_audit():
+            async with dbmod.SessionLocal() as session:
+                rows = (await session.scalars(select(EvidenceAssistanceSuggestion))).all()
+                actions = list((await session.scalars(select(AuditEvent.action))).all())
+                return rows, actions
+
+        rows, actions = asyncio.run(records_and_audit())
+        assert len(rows) == 3
+        assert {row.disposition for row in rows} == {"EDITED", "ACCEPTED", "DISMISSED"}
+        assert "assessor.ai_suggestion.created" in actions
+        assert "assessor.ai_suggestion.disposition_recorded" in actions
+    finally:
+        main.ai_provider.provider = previous
+
+
+@pytest.mark.parametrize(
+    ("provider_error", "expected_status"),
+    [
+        (AssistanceTimeout(), 504),
+        (AssistanceRateLimited(), 429),
+        (AssistanceRefused(), 422),
+        (ValueError("malformed provider response"), 502),
+    ],
+)
+def test_ai_provider_failures_are_non_blocking_and_never_persist_output(
+    client, provider_error, expected_status
+):
+    _worker_id, case_id, criterion_id, _, assessor_email = _prepare_assessor_case(
+        client, f"AI-ERROR-{expected_status}"
+    )
+    evidence_id = _upload_case_evidence(client, case_id, criterion_id, "failure")
+    assert client.post(f"/api/worker/cases/{case_id}/submit").status_code == 200
+    _login(client, assessor_email, "secure-assessor-pass")
+    previous = main.ai_provider.provider
+    main.ai_provider.provider = _TestAssistanceProvider(error=provider_error)
+    try:
+        failed = client.post(
+            f"/api/assessor/cases/{case_id}/ai-suggestions",
+            json={"evidence_ids": [evidence_id], "criterion_ids": [criterion_id]},
+        )
+        assert failed.status_code == expected_status
+        assert client.get(f"/api/assessor/cases/{case_id}/ai-suggestions").json() == []
+        assert (
+            client.put(
+                f"/api/assessor/cases/{case_id}/criteria/{criterion_id}",
+                json={
+                    "result": "NOT_YET",
+                    "notes": "Manual review still works after provider error.",
+                },
+            ).status_code
+            == 200
+        )
+    finally:
+        main.ai_provider.provider = previous
+
+
+def test_ai_provider_timeout_is_bounded(client, monkeypatch):
+    _worker_id, case_id, criterion_id, _, assessor_email = _prepare_assessor_case(
+        client, "AI-TIMEOUT"
+    )
+    evidence_id = _upload_case_evidence(client, case_id, criterion_id, "timeout")
+    assert client.post(f"/api/worker/cases/{case_id}/submit").status_code == 200
+    _login(client, assessor_email, "secure-assessor-pass")
+    previous = main.ai_provider.provider
+    main.ai_provider.provider = _TestAssistanceProvider(
+        result=_suggestion_result(criterion_id, evidence_id), delay=0.05
+    )
+    monkeypatch.setattr(main, "AI_REQUEST_TIMEOUT_SECONDS", 0.01)
+    try:
+        timed_out = client.post(
+            f"/api/assessor/cases/{case_id}/ai-suggestions",
+            json={"evidence_ids": [evidence_id], "criterion_ids": [criterion_id]},
+        )
+        assert timed_out.status_code == 504
+        assert client.get(f"/api/assessor/cases/{case_id}/ai-suggestions").json() == []
+    finally:
+        main.ai_provider.provider = previous
+
+
+def test_malformed_ai_provider_response_is_rejected_without_persistence(client):
+    _worker_id, case_id, criterion_id, _, assessor_email = _prepare_assessor_case(
+        client, "AI-MALFORMED"
+    )
+    evidence_id = _upload_case_evidence(client, case_id, criterion_id, "malformed")
+    assert client.post(f"/api/worker/cases/{case_id}/submit").status_code == 200
+    _login(client, assessor_email, "secure-assessor-pass")
+    previous = main.ai_provider.provider
+    main.ai_provider.provider = _TestAssistanceProvider(
+        result={"provider_id": "incomplete", "output": {"summary": "Missing required fields"}}
+    )
+    try:
+        rejected = client.post(
+            f"/api/assessor/cases/{case_id}/ai-suggestions",
+            json={"evidence_ids": [evidence_id], "criterion_ids": [criterion_id]},
+        )
+        assert rejected.status_code == 502
+        assert client.get(f"/api/assessor/cases/{case_id}/ai-suggestions").json() == []
+    finally:
+        main.ai_provider.provider = previous
+
+
+def test_oversized_ai_provider_response_is_rejected(client):
+    _worker_id, case_id, criterion_id, _, assessor_email = _prepare_assessor_case(
+        client, "AI-OVERSIZE"
+    )
+    evidence_id = _upload_case_evidence(client, case_id, criterion_id, "oversize")
+    assert client.post(f"/api/worker/cases/{case_id}/submit").status_code == 200
+    _login(client, assessor_email, "secure-assessor-pass")
+    oversized = {
+        "provider_id": "test-adapter",
+        "model_id": "test-only",
+        "template_version": "test-template-v1",
+        "output": {
+            "summary": "summary",
+            "mappings": [],
+            "gaps": ["g" * 1000 for _ in range(30)],
+            "uncertainty": "u" * 1000,
+            "limitations": ["l" * 1000 for _ in range(20)],
+            "evidence_references": [],
+        },
+    }
+    previous = main.ai_provider.provider
+    main.ai_provider.provider = _TestAssistanceProvider(result=oversized)
+    try:
+        rejected = client.post(
+            f"/api/assessor/cases/{case_id}/ai-suggestions",
+            json={"evidence_ids": [evidence_id], "criterion_ids": [criterion_id]},
+        )
+        assert rejected.status_code == 502
+        assert client.get(f"/api/assessor/cases/{case_id}/ai-suggestions").json() == []
+    finally:
+        main.ai_provider.provider = previous
 
 
 def test_assessor_queue_scopes_private_evidence_and_requires_explanations(client):

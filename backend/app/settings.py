@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     bootstrap_admin_email: str = ""
     bootstrap_admin_password: str = ""
     bootstrap_admin_name: str = "CraftRelay Administrator"
+    ai_assistance_provider: str = "none"
 
     @property
     def cors_origin_list(self) -> list[str]:

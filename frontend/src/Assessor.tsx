@@ -65,6 +65,31 @@ type Case = {
   criteria: Criterion[]
   practical_tasks: PracticalTask[]
 }
+type SuggestionOutput = {
+  summary: string
+  mappings: { criterion_id: string; evidence_ids: string[]; rationale: string }[]
+  gaps: string[]
+  uncertainty: string
+  limitations: string[]
+  evidence_references: { evidence_id: string; note: string }[]
+}
+type AiSuggestion = {
+  id: string
+  qualification_id: string
+  qualification_version: string
+  provider_id: string
+  model_id: string | null
+  template_version: string
+  evidence_ids: string[]
+  criterion_ids: string[]
+  original_output: SuggestionOutput
+  edited_output: SuggestionOutput | null
+  disposition: 'PENDING' | 'ACCEPTED' | 'EDITED' | 'DISMISSED'
+  request_at: string
+  response_at: string
+  label: string
+}
+type AiAvailability = { available: boolean; reason: string | null; manual_review_available: boolean }
 
 export default function Assessor() {
   const [cases, setCases] = useState<Case[]>([])
@@ -73,6 +98,11 @@ export default function Assessor() {
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [aiAvailability, setAiAvailability] = useState<AiAvailability | null>(null)
+  const [aiSuggestions, setAiSuggestions] = useState<AiSuggestion[]>([])
+  const [aiBusy, setAiBusy] = useState(false)
+  const [aiError, setAiError] = useState('')
+  const [aiNotice, setAiNotice] = useState('')
   const { locale } = useLocale()
 
   async function load(initial = false) {
@@ -105,6 +135,46 @@ export default function Assessor() {
   }
 
   const active = cases.find(item => item.id === selected) ?? cases.find(item => item.status !== 'VERIFIED') ?? cases[0]
+  useEffect(() => {
+    if (!active) return
+    let cancelled = false
+    setAiAvailability(null)
+    setAiSuggestions([])
+    setAiError('')
+    void Promise.all([
+      api<AiAvailability>('/assessor/ai-assistance'),
+      api<AiSuggestion[]>(`/assessor/cases/${active.id}/ai-suggestions`),
+    ]).then(([availability, suggestions]) => {
+      if (!cancelled) { setAiAvailability(availability); setAiSuggestions(suggestions) }
+    }).catch(cause => {
+      if (!cancelled) setAiError(cause instanceof Error ? cause.message : 'Could not load AI assistance status')
+    })
+    return () => { cancelled = true }
+  }, [active?.id])
+
+  async function requestAiAssistance() {
+    if (!active) return
+    const evidence = assistanceEvidence(active)
+    const criterionIds = [...new Set(evidence.map(item => item.criterion_id))]
+    setAiBusy(true); setAiError(''); setAiNotice('')
+    try {
+      const suggestion = await api<AiSuggestion>(`/assessor/cases/${active.id}/ai-suggestions`, {
+        method: 'POST', body: json({ evidence_ids: evidence.map(item => item.id), criterion_ids: criterionIds }),
+      })
+      setAiSuggestions(current => [...current, suggestion])
+      setAiNotice('Unverified AI suggestion — not a competency decision')
+    } catch (cause) {
+      setAiError(cause instanceof Error ? cause.message : 'AI assistance failed. Continue manually.')
+    } finally { setAiBusy(false) }
+  }
+
+  async function updateAiSuggestion(suggestionId: string, disposition: 'ACCEPTED' | 'EDITED' | 'DISMISSED', editedOutput?: SuggestionOutput) {
+    if (!active) return
+    const updated = await api<AiSuggestion>(`/assessor/cases/${active.id}/ai-suggestions/${suggestionId}`, {
+      method: 'PATCH', body: json({ disposition, edited_output: editedOutput ?? null }),
+    })
+    setAiSuggestions(current => current.map(item => item.id === suggestionId ? updated : item))
+  }
   if (loading) return <LoadingState label="Loading assessment queue…" />
 
   const openCount = cases.filter(item => item.status !== 'VERIFIED').length
@@ -147,6 +217,18 @@ export default function Assessor() {
         </section>
         <p className="case-completeness">Evidence available for {active.submitted_criteria} of {active.mandatory_criteria} mandatory criteria · {active.criteria.length} criteria in this qualification version.</p>
 
+        <section className="ai-assistance-panel" aria-labelledby="ai-assistance-heading">
+          <div className="ai-assistance-heading"><div><p className="eyebrow">{active.qualification.code} · VERSION {active.qualification.version}</p><h3 id="ai-assistance-heading">AI evidence assistance</h3></div><span className="status-tag muted">Unverified AI suggestion — not a competency decision</span></div>
+          <p className="subtle">AI suggestions are optional review aids. You must inspect the private evidence and make all formal decisions yourself.</p>
+          {!aiAvailability && !aiError && <p role="status" aria-live="polite">Checking AI assistance availability…</p>}
+          {aiAvailability && !aiAvailability.available && <Feedback>{aiAvailability.reason || 'AI assistance is unavailable. Continue your manual assessment.'}</Feedback>}
+          {aiError && <Feedback>{aiError}</Feedback>}{aiNotice && <Feedback tone="success">{aiNotice}</Feedback>}
+          <button type="button" className="button secondary small-button" disabled={aiBusy || !aiAvailability?.available || active.status === 'VERIFIED' || !assistanceEvidence(active).length} onClick={() => void requestAiAssistance()}>{aiBusy ? 'Requesting suggestion…' : 'Request AI assistance'}</button>
+          {!assistanceEvidence(active).length && <small>Select a case with evidence to request assistance.</small>}
+          {!aiSuggestions.length && aiAvailability?.available && <small>No AI suggestion has been generated for this case.</small>}
+          {aiSuggestions.map(suggestion => <AiSuggestionCard key={suggestion.id} suggestion={suggestion} criteria={active.criteria} disabled={busy || active.status === 'VERIFIED'} locale={locale} onDisposition={updateAiSuggestion} />)}
+        </section>
+
         {active.criteria.map(criterion => <article className="review-criterion" key={criterion.id}>
           <div className="criterion-head"><span className="criterion-code">{criterion.code}</span><span className="subtle small">{criterion.mandatory ? 'Required' : 'Optional'}{criterion.requires_practical ? ' · Practical' : ''}</span></div>
           <h3>{criterion.description}</h3>
@@ -164,6 +246,70 @@ export default function Assessor() {
       </section> : <EmptyState title="Select a case" description="Assessment cases appear here when workers submit evidence." />}
     </div>
   </>
+}
+
+function AiSuggestionCard({ suggestion, criteria, disabled, locale, onDisposition }: {
+  suggestion: AiSuggestion
+  criteria: Criterion[]
+  disabled: boolean
+  locale: 'en' | 'hi' | 'hne'
+  onDisposition: (id: string, disposition: 'ACCEPTED' | 'EDITED' | 'DISMISSED', output?: SuggestionOutput) => Promise<void>
+}) {
+  const [summary, setSummary] = useState(suggestion.original_output.summary)
+  const [editing, setEditing] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const output = suggestion.edited_output ?? suggestion.original_output
+  const dispositionLabel = suggestion.disposition === 'ACCEPTED' ? 'Assessor accepted suggestion'
+    : suggestion.disposition === 'EDITED' ? 'Assessor edited suggestion'
+      : suggestion.disposition === 'DISMISSED' ? 'Assessor dismissed suggestion' : 'Pending assessor acknowledgement'
+
+  async function save(disposition: 'ACCEPTED' | 'EDITED' | 'DISMISSED') {
+    setBusy(true); setError('')
+    try {
+      const edited = disposition === 'EDITED' ? { ...suggestion.original_output, summary: summary.trim() } : undefined
+      await onDisposition(suggestion.id, disposition, edited)
+      setEditing(false)
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not save suggestion disposition') }
+    finally { setBusy(false) }
+  }
+
+  return <article className="ai-suggestion-card">
+    <div className="ai-suggestion-meta"><b>{suggestion.label}</b><span className="status-tag">{dispositionLabel}</span></div>
+    <p className="subtle">{suggestion.provider_id}{suggestion.model_id ? ` · ${suggestion.model_id}` : ''} · {suggestion.template_version} · {formatDate(suggestion.response_at, locale, true)}</p>
+    <p className="subtle">Qualification version: {suggestion.qualification_id} · {suggestion.qualification_version}</p>
+    <h4>Summary</h4>
+    {editing ? <label className="ai-edit-summary">Assessor-edited version<textarea value={summary} onChange={event => setSummary(event.target.value)} minLength={1} maxLength={3000} aria-label="Assessor-edited version" /></label>
+      : <p>{output.summary}</p>}
+    <h4>Suggested criterion mappings</h4>
+    {output.mappings.length ? <ul>{output.mappings.map((mapping, index) => {
+      const criterion = criteria.find(item => item.id === mapping.criterion_id)
+      return <li key={`${mapping.criterion_id}-${index}`}>Criterion {criterion ? `${criterion.code} — ${criterion.description}` : mapping.criterion_id}: {mapping.rationale} · Evidence items: {mapping.evidence_ids.join(', ')}</li>
+    })}</ul> : <p className="subtle">Not generated</p>}
+    <h4>Evidence references</h4>
+    {output.evidence_references.length ? <ul>{output.evidence_references.map(reference => <li key={reference.evidence_id}>{reference.evidence_id}: {reference.note}</li>)}</ul> : <p className="subtle">Not generated</p>}
+    <h4>Gaps to investigate</h4><ul>{output.gaps.map((gap, index) => <li key={index}>{gap}</li>)}</ul>
+    <h4>Uncertainty</h4><p>{output.uncertainty}</p>
+    <h4>Limitations</h4><ul>{output.limitations.map((limitation, index) => <li key={index}>{limitation}</li>)}</ul>
+    {suggestion.edited_output && <details><summary>Original AI suggestion</summary><p>{suggestion.original_output.summary}</p></details>}
+    <small>This acknowledgement does not record a competency decision.</small>
+    {suggestion.disposition === 'PENDING' && <div className="ai-suggestion-actions">
+      {editing ? <><button type="button" className="button primary small-button" disabled={disabled || busy || !summary.trim()} onClick={() => void save('EDITED')}>{busy ? 'Saving…' : 'Save edited suggestion'}</button><button type="button" className="button secondary small-button" disabled={busy} onClick={() => { setEditing(false); setSummary(suggestion.original_output.summary) }}>Close</button></>
+        : <><button type="button" className="button secondary small-button" disabled={disabled || busy} onClick={() => void save('ACCEPTED')}>Accept suggestion</button><button type="button" className="button secondary small-button" disabled={disabled || busy} onClick={() => setEditing(true)}>Edit suggestion</button><button type="button" className="button secondary small-button" disabled={disabled || busy} onClick={() => void save('DISMISSED')}>Dismiss suggestion</button></>}
+    </div>}
+    {error && <Feedback>{error}</Feedback>}
+  </article>
+}
+
+function assistanceEvidence(item: Case) {
+  return [
+    ...item.criteria.flatMap(criterion => criterion.evidence.map(evidence => ({
+      id: evidence.id, criterion_id: criterion.id,
+    }))),
+    ...item.practical_tasks.flatMap(task => task.attempts.flatMap(attempt => attempt.evidence ? [{
+      id: attempt.evidence.id, criterion_id: task.criterion_id,
+    }] : [])),
+  ]
 }
 
 function PracticalTaskReview({ task, disabled, onReview }: {

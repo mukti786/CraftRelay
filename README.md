@@ -1,6 +1,6 @@
 # CraftRelay
 
-CraftRelay is a web application for Recognition of Prior Learning (RPL). It is intended to help workers document skills gained through experience and submit supporting evidence, while giving authorized assessors a structured way to review that evidence against qualification criteria and record competency decisions. The product explores an AI-assisted assessment problem, but the current application does not include an AI model or automated competency assessment.
+CraftRelay is a web application for Recognition of Prior Learning (RPL). It is intended to help workers document skills gained through experience and submit supporting evidence, while giving authorized assessors a structured way to review that evidence against qualification criteria and record competency decisions. The assessor workspace now includes an optional, bounded AI-assistance interface and provider-neutral integration boundary. No production provider is configured, so the current application generates no AI suggestions.
 
 ## SIH 2026 problem statement
 
@@ -26,7 +26,7 @@ Workers may have developed useful skills through work and other experience witho
 
 ## Human oversight and trust
 
-AI assistance is part of the problem statement and product direction; no AI model, generated assessment, or automated certification is implemented in the current code. Formal competency decisions are made only through the authorized human-assessor workflow. A worker's self-declared skills are not verified competencies, and uploading evidence alone does not prove competency. Assessors review evidence against the applicable criteria and record decisions. Customer reviews describe service experiences and do not establish qualifications.
+The assessor workspace has an opt-in interface for bounded evidence summaries and criterion-mapping suggestions. At present no provider is configured and no live suggestion generation has been verified; the interface reports this and keeps manual review available. Formal competency decisions are made only through the authorized human-assessor workflow. A worker's self-declared skills are not verified competencies, and uploading evidence alone does not prove competency. Customer reviews describe service experiences and do not establish qualifications.
 
 ## Technology stack
 
@@ -50,7 +50,7 @@ uv sync --extra dev
 Copy-Item .env.example .env
 ```
 
-Edit `backend/.env` and set a private random `SECRET_KEY`, `BOOTSTRAP_ADMIN_EMAIL`, and `BOOTSTRAP_ADMIN_PASSWORD` (12 or more characters). The example configuration uses a local SQLite database at `backend/craftrelay.db` and stores private evidence under `backend/data/evidence/`; these local files are excluded from Git. Then, still in `backend/`, run:
+Edit `backend/.env` and set a private random `SECRET_KEY`, `BOOTSTRAP_ADMIN_EMAIL`, and `BOOTSTRAP_ADMIN_PASSWORD` (12 or more characters). `AI_ASSISTANCE_PROVIDER` defaults to `none`; no provider adapter is currently implemented. The example configuration uses a local SQLite database at `backend/craftrelay.db` and stores private evidence under `backend/data/evidence/`; these local files are excluded from Git. Then, still in `backend/`, run:
 
 ```powershell
 uv run python -m alembic upgrade head
@@ -100,11 +100,11 @@ npm run build
 
 The repository contains working local workflows for worker profiles and evidence submissions, human assessor review, customer discovery and service requests, and administrator account and qualification management. English and Hindi localization are implemented; the Chhattisgarhi draft still needs human review. The included qualification and criteria are illustrative, not official sources.
 
-This is an active project, not a claim of production readiness. PostgreSQL operation and browser acceptance testing have not been verified. Evidence currently uses private local filesystem storage; production object storage, retention policy, deployment configuration, and operational security controls still need decisions and validation. The practical-task attempt and assessor-review workflow is implemented for approved catalogue tasks, but any illustrative task data remains explicitly non-official. AI/RAG assistance and offline synchronization are not implemented. Do not use the local demonstration setup for real worker records.
+This is an active project, not a claim of production readiness. PostgreSQL operation, browser acceptance testing, and live-provider integration have not been verified. Evidence currently uses private local filesystem storage; production object storage, retention policy, deployment configuration, and operational security controls still need decisions and validation. The practical-task attempt and assessor-review workflow is implemented for approved catalogue tasks, but any illustrative task data remains explicitly non-official. The AI-assistance UI and provider boundary are implemented, but no live provider is configured; offline synchronization is not implemented. Do not use the local demonstration setup for real worker records.
 
 ## Future improvements
 
-Realistic next steps include independently validating PostgreSQL migrations and operation, planning secure evidence storage and retention for a deployment, reviewing the Chhattisgarhi translations with fluent speakers, and evaluating any future AI assistance under human oversight without automating certification.
+Realistic next steps include independently validating PostgreSQL migrations and operation, planning secure evidence storage and retention for a deployment, reviewing the Chhattisgarhi translations with fluent speakers, and evaluating a privacy-reviewed provider integration under human oversight without automating certification.
 
 ## Repository notes
 
