@@ -75,6 +75,29 @@ npm run dev
 
 The frontend defaults to `http://localhost:8000` for its API (`VITE_API_URL`). The local Vite server prints the address to open in a browser. Keep the API running while using the web client.
 
+### Local synthetic judge demo
+
+For a repeatable demonstration, use the dedicated seed command rather than `app.bootstrap`. It accepts only an explicitly named SQLite database under `backend/.tmp/`, requires `APP_ENV=development`, `--confirm-demo-data`, and a locally chosen `DEMO_PASSWORD` of at least 12 characters. The command applies Alembic migrations to that isolated database and creates synthetic worker, assessor, customer, and administrator accounts plus an illustrative non-official qualification. It refuses unrecognized or partially seeded data and never resets a database. It does not create evidence, task outcomes, customer activity, assessment decisions, or competencies.
+
+From a PowerShell window at the repository root:
+
+```powershell
+Set-Location backend
+uv sync --extra dev
+$env:APP_ENV = 'development'
+$secureDemoPassword = Read-Host 'Choose a local synthetic demo password (12+ characters)' -AsSecureString
+$env:DEMO_PASSWORD = [System.Net.NetworkCredential]::new('', $secureDemoPassword).Password
+$demoDatabase = 'sqlite+aiosqlite:///./.tmp/craftrelay-judge-demo.db'
+uv run python -m app.demo_data --database-url $demoDatabase --confirm-demo-data
+$env:DATABASE_URL = $demoDatabase
+$env:EVIDENCE_DIR = './.tmp/craftrelay-judge-demo-evidence'
+uv run python -m uvicorn app.main:app --reload --port 8000
+```
+
+In a second PowerShell window, run the frontend setup above (`npm ci`, then `npm run dev`). Sign in with one of the synthetic accounts listed in the local judge walkthrough; all four use the password chosen above. This is a shared local demo password, not a production credential. Keep the API window and its environment open during the demo. After stopping the API, clear the variables with `Remove-Item Env:DEMO_PASSWORD, Env:DATABASE_URL, Env:EVIDENCE_DIR, Env:APP_ENV -ErrorAction SilentlyContinue`. The demo database and evidence directory are ignored local files. Do not place real evidence or personal information in them.
+
+The qualification, criteria, rubric, accounts, profile and any files the presenter uploads are synthetic demonstration content; they are not official MSDE data, government-endorsed material, real people, real transactions, or measured outcomes. No live AI provider is configured. For the complete role-by-role sequence and recovery guidance, consult the local `docs/JUDGE_WALKTHROUGH.md`.
+
 ## Testing and checks
 
 Run backend checks from `backend/`:
