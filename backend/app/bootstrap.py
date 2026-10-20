@@ -9,9 +9,16 @@ from app.settings import get_settings
 
 
 async def main():
+    settings = get_settings()
+    if settings.app_env != "development":
+        raise SystemExit(
+            "app.bootstrap is for local development only; use Alembic and an approved "
+            "production administrator-provisioning procedure."
+        )
+    if engine.url.drivername != "sqlite+aiosqlite":
+        raise SystemExit("app.bootstrap may only use a local SQLite database")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    settings = get_settings()
     email = settings.bootstrap_admin_email.strip().lower()
     password = settings.bootstrap_admin_password
     if not email or not password:

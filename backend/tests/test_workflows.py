@@ -5,6 +5,7 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 from pwdlib import PasswordHash
+from pydantic import ValidationError
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -1466,7 +1467,10 @@ def test_sqlite_enables_foreign_keys_and_rejects_orphan_rows(client):
     asyncio.run(verify_integrity())
 
 
-def test_production_configuration_rejects_missing_weak_secrets_and_wildcard_cors():
+def test_production_configuration_rejects_missing_weak_secrets_and_wildcard_cors(monkeypatch):
+    monkeypatch.delenv("APP_ENV", raising=False)
+    with pytest.raises(ValidationError, match="app_env"):
+        Settings(_env_file=None)
     with pytest.raises(RuntimeError, match="SECRET_KEY"):
         validate_settings(Settings(app_env="production", secret_key=""))
     with pytest.raises(RuntimeError, match="high-entropy"):
@@ -1481,12 +1485,54 @@ def test_production_configuration_rejects_missing_weak_secrets_and_wildcard_cors
                 cors_origins="*",
             )
         )
+    with pytest.raises(RuntimeError, match="PostgreSQL via asyncpg"):
+        validate_settings(
+            Settings(
+                app_env="production",
+                secret_key="aB3dE5gH7jK9mN2pQ4sT6vX8zA0cD1fG",
+                cors_origins="https://app.example",
+            )
+        )
+    with pytest.raises(RuntimeError, match="HTTPS origins"):
+        validate_settings(
+            Settings(
+                app_env="production",
+                secret_key="aB3dE5gH7jK9mN2pQ4sT6vX8zA0cD1fG",
+                cors_origins="http://app.example",
+                database_url="postgresql+asyncpg://user:private@db.example/craftrelay",
+                evidence_dir="D:/craftrelay/evidence",
+            )
+        )
+    with pytest.raises(RuntimeError, match="absolute persistent mount path"):
+        validate_settings(
+            Settings(
+                app_env="production",
+                secret_key="aB3dE5gH7jK9mN2pQ4sT6vX8zA0cD1fG",
+                cors_origins="https://app.example",
+                database_url="postgresql+asyncpg://user:private@db.example/craftrelay",
+            )
+        )
+    with pytest.raises(RuntimeError, match="valid PostgreSQL URL") as invalid_database:
+        validate_settings(
+            Settings(
+                app_env="production",
+                secret_key="aB3dE5gH7jK9mN2pQ4sT6vX8zA0cD1fG",
+                cors_origins="https://app.example",
+                database_url="invalid-do-not-leak-database-url",
+                evidence_dir="D:/craftrelay/evidence",
+            )
+        )
+    assert "do-not-leak" not in str(invalid_database.value)
+    with pytest.raises(RuntimeError, match="APP_ENV"):
+        validate_settings(Settings(app_env="prod"))
     assert (
         validate_settings(
             Settings(
                 app_env="production",
                 secret_key="aB3dE5gH7jK9mN2pQ4sT6vX8zA0cD1fG",
                 cors_origins="https://app.example",
+                database_url="postgresql+asyncpg://user:private@db.example/craftrelay",
+                evidence_dir="D:/craftrelay/evidence",
             )
         ).app_env
         == "production"
@@ -1517,6 +1563,46 @@ def test_bootstrap_refuses_to_promote_an_existing_non_admin(client, monkeypatch)
         ),
     )
     with pytest.raises(SystemExit, match="distinct BOOTSTRAP_ADMIN_EMAIL"):
+        asyncio.run(bootstrap.main())
+
+
+def test_bootstrap_refuses_production_before_schema_creation(monkeypatch):
+    monkeypatch.setattr(
+        bootstrap,
+        "get_settings",
+        lambda: Settings(
+            app_env="production",
+            secret_key="aB3dE5gH7jK9mN2pQ4sT6vX8zA0cD1fG",
+            cors_origins="https://app.example",
+            database_url="postgresql+asyncpg://user:private@db.example/craftrelay",
+            evidence_dir="D:/craftrelay/evidence",
+        ),
+    )
+
+    class ForbiddenEngine:
+        def begin(self):
+            raise AssertionError("production bootstrap attempted database/schema work")
+
+    monkeypatch.setattr(bootstrap, "engine", ForbiddenEngine())
+    with pytest.raises(SystemExit, match="local development only"):
+        asyncio.run(bootstrap.main())
+
+
+def test_bootstrap_refuses_non_sqlite_database_before_schema_creation(monkeypatch):
+    monkeypatch.setattr(
+        bootstrap,
+        "get_settings",
+        lambda: Settings(app_env="development", secret_key="local-test-only"),
+    )
+
+    class ForbiddenEngine:
+        url = type("URL", (), {"drivername": "postgresql+asyncpg"})()
+
+        def begin(self):
+            raise AssertionError("bootstrap attempted schema work against a server database")
+
+    monkeypatch.setattr(bootstrap, "engine", ForbiddenEngine())
+    with pytest.raises(SystemExit, match="local SQLite database"):
         asyncio.run(bootstrap.main())
 
 

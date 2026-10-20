@@ -58,9 +58,15 @@ uv run python -m app.bootstrap
 uv run python -m uvicorn app.main:app --reload --port 8000
 ```
 
-The bootstrap command creates the configured administrator and local illustrative qualification data. Run Alembic migrations before bootstrap. The API is available at `http://localhost:8000` and its health endpoint is `http://localhost:8000/api/health`.
+The bootstrap command is restricted to `APP_ENV=development` and a local `sqlite+aiosqlite` database; it creates the configured local administrator and illustrative qualification data only after Alembic migrations. It refuses production mode and server databases before schema or account changes. Production administrator provisioning is not implemented and must be designed as a separate controlled operation. The API is available at `http://localhost:8000` and its health endpoint is `http://localhost:8000/api/health`.
 
 For a PostgreSQL database, set `DATABASE_URL` to an async SQLAlchemy URL such as `postgresql+asyncpg://user:password@host:5432/database`. Keep credentials private. PostgreSQL has not yet been verified for this project; see [Current status and limitations](#current-status-and-limitations).
+
+### Production configuration boundary
+
+`APP_ENV` is required at startup and must be exactly `development`, `test`, or `production`. When set to `production`, validation also requires a high-entropy `SECRET_KEY`, explicit HTTPS-only `CORS_ORIGINS`, a PostgreSQL `DATABASE_URL` using the `asyncpg` driver, and an absolute `EVIDENCE_DIR` path. Set these values through the hosting platform's secret/configuration manager; do not use `.env.example` as a production configuration. Mount `EVIDENCE_DIR` to storage that the host operator has verified persists across process replacement and redeployment. The application can validate that the path is absolute, but cannot determine whether the host actually provides durable storage. There is no object-storage adapter in this release.
+
+Apply `uv run python -m alembic upgrade head` as a controlled release step before routing application traffic. Do not use `app.bootstrap` in production: it is development-only and production administrator provisioning remains an operational blocker. A source-derived process command from `backend/` is `uv run python -m uvicorn app.main:app --host 0.0.0.0 --port 8000`; it has not been verified on a production host. For a separately hosted frontend/backend, configure the exact HTTPS frontend origin in `CORS_ORIGINS` and set the build-time `VITE_API_URL` to the HTTPS API origin. Credentialed cross-site deployments may require `COOKIE_SAMESITE=none`; the application marks cookies Secure in production, but browser acceptance must verify the host/proxy behavior. Prefer same-origin `/api` proxying where practical.
 
 ### 2. Start the web client
 
@@ -103,9 +109,9 @@ The qualification, criteria, rubric, accounts, profile and any files the present
 Run backend checks from `backend/`:
 
 ```powershell
-uv run pytest
-uv run ruff check app tests migrations
-uv run ruff format --check app tests migrations
+uv run python -m pytest
+uv run python -m ruff check app tests migrations
+uv run python -m ruff format --check app tests migrations
 ```
 
 Run frontend checks from `frontend/`:
@@ -123,7 +129,7 @@ npm run build
 
 The repository contains working local workflows for worker profiles and evidence submissions, human assessor review, customer discovery and service requests, and administrator account and qualification management. English and Hindi localization are implemented; the Chhattisgarhi draft still needs human review. The included qualification and criteria are illustrative, not official sources.
 
-This is an active project, not a claim of production readiness. PostgreSQL operation, browser acceptance testing, and live-provider integration have not been verified. Evidence currently uses private local filesystem storage; production object storage, retention policy, deployment configuration, and operational security controls still need decisions and validation. The practical-task attempt and assessor-review workflow is implemented for approved catalogue tasks, but any illustrative task data remains explicitly non-official. The AI-assistance UI and provider boundary are implemented, but no live provider is configured; offline synchronization is not implemented. Do not use the local demonstration setup for real worker records.
+This is an active project, not a claim of production readiness. PostgreSQL operation, browser acceptance testing, and live-provider integration have not been verified. Evidence uses private local filesystem storage; production durability requires an operator-verified persistent mount or a future private object-storage adapter, and retention policy, deployment configuration, production administrator provisioning, and operational security controls still need decisions and validation. Production source maps are disabled in the Vite build. The practical-task attempt and assessor-review workflow is implemented for approved catalogue tasks, but any illustrative task data remains explicitly non-official. The AI-assistance UI and provider boundary are implemented, but no live provider is configured; offline synchronization is not implemented. Do not use the local demonstration setup for real worker records.
 
 ## Future improvements
 
