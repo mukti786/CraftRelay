@@ -74,8 +74,49 @@ function AuthScreen({mode,setMode,onAuth,error,setError}:{mode:'login'|'register
   const [busy,setBusy]=useState(false)
   const { locale, setLocale, missingDraftCount } = useLocale()
   async function submit(e:FormEvent<HTMLFormElement>) { e.preventDefault(); setError('');setBusy(true);const form=new FormData(e.currentTarget);const payload=Object.fromEntries(form.entries()); try { const u=await api<User>(`/auth/${mode==='login'?'login':'register'}`,{method:'POST',body:json(payload)});onAuth(u) } catch(err) {setError(err instanceof Error?err.message:'Could not sign in')} finally {setBusy(false)} }
+  if (DEMO_MODE) return <DemoLanding locale={locale} setLocale={setLocale} missingDraftCount={missingDraftCount} onAuth={onAuth} error={error} />
   return <div className="auth-screen"><div className="auth-art"><div className="auth-art-top"><img className="auth-brand-logo" src="/craftrelay-logo.svg" alt="CraftRelay"/></div><div className="art-copy"><p className="eyebrow light">SKILLS THAT MOVE YOU FORWARD</p><h1>Your experience<br/><em>has value.</em></h1><p>Make your skills visible, get them assessed, and connect with people who need your work.</p></div><div className="art-bottom"><div className="art-stat"><b>01</b><span>Share what you know</span></div><div className="art-stat"><b>02</b><span>Get assessed by a person</span></div><div className="art-stat"><b>03</b><span>Find trusted work</span></div></div><div className="decor-orbit orbit-a"/><div className="decor-orbit orbit-b"/><div className="decor-dot"/></div><div className="auth-main"><div className="auth-card"><div className="auth-locale"><label className="sr-only" htmlFor="auth-language">Display language</label><select id="auth-language" className="locale-select" aria-label="Display language" value={locale} onChange={event=>setLocale(event.target.value as 'en'|'hi'|'hne')}><option value="en">English</option><option value="hi">Hindi</option><option value="hne">Chhattisgarhi draft</option></select></div>{locale==='hne'&&<p className="draft-auth-note" role="status">Draft: {missingDraftCount} labels remain in English for review</p>}<div className="mobile-brand"><img className="brand-symbol" src="/craftrelay-mark.svg" alt=""/><b>CraftRelay</b></div>{DEMO_MODE ? <><p className="eyebrow">SIH 2026 · INTERACTIVE DEMO</p><h2>Choose a demo workspace</h2><p className="subtle">Synthetic accounts let you explore separate worker and assessor views. No real account is created.</p><div className="demo-auth-actions"><button className="button primary full" type="button" onClick={async()=>onAuth(await demoLogin('worker'))}>Enter as worker · Asha Patel <span>→</span></button><button className="button secondary full" type="button" onClick={async()=>onAuth(await demoLogin('assessor'))}>Enter as assessor · Ravi Verma <span>→</span></button></div><div className="demo-auth-disclosure" role="note"><b>Demo-only simulated sign-in</b><span>This frontend does not contact the backend. Authentication is not secure, files are not uploaded, and changes do not sync across devices.</span></div><button type="button" className="text-button demo-reset-auth" onClick={async () => { if (window.confirm('Reset all CraftRelay demo data in this browser?')) await resetDemoData() }}>Reset demo data</button>{error&&<div className="alert" role="alert">{error}</div>}</> : <><p className="eyebrow">{mode==='login'?'WELCOME BACK':'WELCOME'}</p><h2>{mode==='login'?'Sign in to CraftRelay':'Create your account'}</h2><p className="subtle">{mode==='login'?'Pick up where your skills story left off.':'Start with a free account. You can update your details later.'}</p><form onSubmit={submit} className="form-stack">{mode==='register'&&<label>Full name<input name="full_name" required minLength={2} placeholder="e.g. Asha Patel" autoComplete="name"/></label>}<label>Email address<input name="email" required type="email" placeholder="you@example.com" autoComplete="email"/></label><label>Password<input name="password" required type="password" minLength={mode==='register'?10:1} placeholder={mode==='register'?'At least 10 characters':'Your password'} autoComplete={mode==='register'?'new-password':'current-password'}/></label>{mode==='register'&&<label>I am joining as<select name="role"><option value="worker">A skilled worker</option><option value="customer">A customer</option></select></label>}{error&&<div className="alert" role="alert">{error}</div>}<button className="button primary full" disabled={busy}>{busy?'Please wait…':mode==='login'?'Sign in':'Create account'}<span>→</span></button></form><p className="auth-switch">{mode==='login'?"New to CraftRelay?":"Already have an account?"} <button type="button" onClick={()=>{setError('');setMode(mode==='login'?'register':'login')}}>{mode==='login'?'Create an account':'Sign in'}</button></p></>}</div></div></div>
 }
+
+function DemoLanding({locale,setLocale,missingDraftCount,onAuth,error}:{locale:'en'|'hi'|'hne';setLocale:(locale:'en'|'hi'|'hne')=>void;missingDraftCount:number;onAuth:(u:User)=>void;error:string}) {
+  return <div className="auth-screen demo-landing">
+    <section className="auth-art demo-hero" aria-labelledby="landing-title">
+      <div className="landing-brand-block">
+        <div className="landing-brand"><img src="/craftrelay-mark.svg" alt=""/><span>CraftRelay</span></div>
+        <p className="landing-tagline">Structured skill assessment. Evidence-backed review. Clear remediation.</p>
+      </div>
+      <div className="landing-copy">
+        <p className="eyebrow light">RECOGNITION OF PRIOR LEARNING</p>
+        <h1 id="landing-title">Make work experience <em>count.</em></h1>
+        <p>Workers share what they know. Assessors review evidence against clear criteria and track what needs more.</p>
+      </div>
+      <div className="landing-preview" aria-label="Illustrative assessment workflow preview">
+        <div className="preview-header"><div><span className="preview-kicker">SAMPLE CASE · ILLUSTRATIVE</span><b>CR-MAS-01 <span>v1.0</span></b></div><span className="preview-status">Submitted</span></div>
+        <div className="preview-evidence"><span className="preview-file-icon" aria-hidden="true">▧</span><div><b>Evidence for review</b><small>2 criteria · metadata only</small></div><span className="preview-count">02</span></div>
+        <div className="preview-steps"><span className="step-done"><i>1</i>Worker submits</span><span className="step-current"><i>2</i>Assessor reviews</span><span><i>3</i>Remediation tracked</span></div>
+        <small className="preview-note">A human assessor makes every formal competency decision.</small>
+      </div>
+      <div className="landing-bottom"><span><i aria-hidden="true">✓</i> Declared skills stay distinct from verified competencies</span><span><i aria-hidden="true">✓</i> Evidence informs review; it does not prove competency by itself</span></div>
+    </section>
+    <main className="auth-main demo-entry">
+      <div className="demo-entry-top"><span className="demo-entry-label">SIH 2026 · INTERACTIVE PROTOTYPE</span><div className="auth-locale"><label className="sr-only" htmlFor="auth-language">Display language</label><select id="auth-language" className="locale-select" value={locale} onChange={event=>setLocale(event.target.value as 'en'|'hi'|'hne')}><option value="en">English</option><option value="hi">Hindi</option><option value="hne">Chhattisgarhi draft</option></select></div></div>
+      {locale==='hne'&&<p className="draft-auth-note" role="status">Draft: {missingDraftCount} labels remain in English for review</p>}
+      <section className="demo-entry-card" aria-labelledby="demo-entry-title">
+        <p className="eyebrow">EXPLORE THE DEMO</p><h2 id="demo-entry-title">Choose a workspace</h2>
+        <p className="entry-intro">Switch between two synthetic roles to follow a case from submission to assessor feedback.</p>
+        <div className="demo-auth-actions">
+          <button className="button primary full demo-role-button" type="button" onClick={async()=>onAuth(await demoLogin('worker'))}><span><b>Enter worker demo</b><small>Asha Patel · synthetic worker profile</small></span><span aria-hidden="true">→</span></button>
+          <button className="button secondary full demo-role-button" type="button" onClick={async()=>onAuth(await demoLogin('assessor'))}><span><b>Enter assessor demo</b><small>Ravi Verma · human review workspace</small></span><span aria-hidden="true">→</span></button>
+        </div>
+        {error&&<div className="alert" role="alert">{error}</div>}
+        <div className="demo-auth-disclosure" role="note"><b>Demo-only simulated sign-in</b><span>This frontend does not contact the backend. Sign-in is not secure, evidence files are not uploaded, and changes do not sync across devices.</span></div>
+        <button type="button" className="text-button demo-reset-auth" onClick={async () => { if (window.confirm('Reset all CraftRelay demo data in this browser?')) await resetDemoData() }}>Reset demo data</button>
+      </section>
+      <p className="entry-footnote">CraftRelay · SIH problem statement prototype · Not a government service</p>
+    </main>
+  </div>
+}
+
 function Home({user,setView}:{user:User;setView:(v:View)=>void}) {
   const greetings:Record<User['role'],string>={worker:'Your work speaks for itself.',assessor:'Every decision builds trust.',customer:'Find the right person for the job.',admin:'A clear view of the platform.'}
   const actions:Record<User['role'],{title:string;copy:string;button:string;view:View}[]>={
