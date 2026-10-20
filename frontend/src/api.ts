@@ -1,4 +1,7 @@
-export const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+// Production builds default to the self-contained SIH demo. Local development
+// continues to use FastAPI unless VITE_DEMO_MODE=true is explicitly selected.
+export const DEMO_MODE = import.meta.env.PROD || import.meta.env.VITE_DEMO_MODE === 'true'
+export const API = DEMO_MODE ? '' : import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -8,6 +11,7 @@ export class ApiError extends Error {
 }
 
 export function upload<T>(path: string, body: FormData, onProgress: (percentage: number) => void): Promise<T> {
+  if (DEMO_MODE) return import('./demo').then(module => module.demoUpload<T>(path, body, onProgress))
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest()
     request.open('POST', `${API}/api${path}`)
@@ -33,6 +37,7 @@ export function upload<T>(path: string, body: FormData, onProgress: (percentage:
 }
 
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
+  if (DEMO_MODE) return import('./demo').then(module => module.demoApi<T>(path, options))
   const headers = new Headers(options.headers)
   if (!(options.body instanceof FormData) && options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
   const response = await fetch(`${API}/api${path}`, { ...options, headers, credentials: 'include' })
@@ -45,6 +50,16 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   return response.json() as Promise<T>
 }
 export const json = (value: unknown) => JSON.stringify(value)
+export async function demoLogin(role: 'worker' | 'assessor') {
+  if (!DEMO_MODE) throw new Error('Demo sign-in is only available in demo mode')
+  const module = await import('./demo')
+  return module.loginDemoRole(role)
+}
+export async function resetDemoData() {
+  if (!DEMO_MODE) return
+  const module = await import('./demo')
+  module.resetDemoState()
+}
 export type User = { id: string; email: string; full_name: string; role: 'worker' | 'assessor' | 'customer' | 'admin' }
 export type Qualification = { id: string; code: string; version: string; title: string; source_name: string; source_url: string; official: boolean; criterion_count?: number }
 export type Criterion = { id: string; code: string; description: string; mandatory: boolean; requires_practical: boolean; evidence_count?: number }

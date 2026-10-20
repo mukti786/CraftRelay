@@ -104,3 +104,16 @@ input:focus,textarea:focus,select:focus,.form-stack input:focus,.form-stack sele
 .session-recovery-card .alert{margin:0}
 .session-recovery-card .button{justify-self:start;min-height:44px}
 @media(max-width:420px){.session-recovery{padding:16px}.session-recovery-card{padding:20px}}
+
+/* Self-contained SIH demo disclosure and controls. */
+.demo-notice{display:flex;align-items:center;gap:12px;padding:12px 4.5%;border-bottom:1px solid #354760;background:#142235;color:#dbe8f7;font-size:12px;line-height:1.5}
+.demo-notice>b{color:#82d4ff;white-space:nowrap}
+.demo-notice>span{flex:1}
+.demo-notice .button{white-space:nowrap}
+.demo-auth-actions{display:grid;gap:10px;margin:22px 0 18px}
+.demo-auth-actions .button{justify-content:space-between;min-height:48px}
+.demo-auth-disclosure{display:grid;gap:5px;padding:13px 14px;border:1px solid #3a4d63;border-radius:11px;background:#111b29;color:#c2d1e2;font-size:11px;line-height:1.55}
+.demo-auth-disclosure>b{color:#8bd9ff}
+.demo-reset-auth{justify-self:start}
+.demo-notice button:focus-visible,.demo-auth-actions button:focus-visible,.demo-reset-auth:focus-visible{outline:2px solid #77d1ff;outline-offset:3px}
+@media(max-width:700px){.demo-notice{align-items:flex-start;flex-wrap:wrap;padding:12px 16px}.demo-notice>b{width:100%}.demo-notice>span{flex-basis:100%}.demo-notice .button{width:100%}}

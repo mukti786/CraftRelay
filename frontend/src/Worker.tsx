@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react'
-import { api, json, upload, Criterion, Qualification, Worker as WorkerProfile } from './api'
+import { api, json, upload, Criterion, Qualification, Worker as WorkerProfile, DEMO_MODE } from './api'
 import { EmptyState, Feedback, LoadingState } from './ui'
 
 type EvidenceRow = {
@@ -296,13 +296,13 @@ function CriterionRow({ criterion, evidence, tasks, caseId, disabled, onUploaded
       <input id={`evidence-description-${criterion.id}`} name="description" required minLength={5} maxLength={2000} placeholder="Briefly describe this evidence" />
       <label className="sr-only" htmlFor={`evidence-file-${criterion.id}`}>Choose a private evidence file</label>
       <input id={`evidence-file-${criterion.id}`} name="file" type="file" required accept=".pdf,image/jpeg,image/png,image/webp" />
-      <button disabled={busy} className="button secondary small-button">{busy ? 'Uploading…' : 'Add evidence'}</button>
+      <button disabled={busy} className="button secondary small-button">{busy ? DEMO_MODE ? 'Saving metadata…' : 'Uploading…' : DEMO_MODE ? 'Save evidence metadata' : 'Add evidence'}</button>
       {progress !== null && <div className="upload-progress" role="status" aria-live="polite">
         <progress max="100" value={progress} aria-label="Evidence upload progress" />
-        <span>{progress < 100 ? `Uploading ${progress}%` : 'Upload sent · validating securely…'}</span>
+        <span>{DEMO_MODE ? 'Evidence metadata saved locally · the file was not uploaded' : progress < 100 ? `Uploading ${progress}%` : 'Upload sent · validating securely…'}</span>
       </div>}
       {error && <span className="form-error" role="alert">{error}</span>}
-      <small>PDF, JPEG, PNG, or WebP · max 20 MB · stored privately. Evidence is reviewed by an assessor.</small>
+      <small>{DEMO_MODE ? 'Demo only: PDF, JPEG, PNG, or WebP · max 20 MB. Only filename, type, size, and your note stay in this browser; the file itself is not uploaded or stored.' : 'PDF, JPEG, PNG, or WebP · max 20 MB · stored privately. Evidence is reviewed by an assessor.'}</small>
     </form>}
   </article>
 }
