@@ -27,6 +27,17 @@ test('primary navigation and icon-only actions expose semantics to assistive tec
   assert.match(source('Admin.tsx'), /aria-expanded=\{show\}/)
 })
 
+test('worker work requests remain in navigation and browser mode shows an honest empty state', () => {
+  const app = source('App.tsx')
+  assert.match(app, /\{key:'requests',label:'Work requests',icon:'↗'\}/)
+  assert.match(app, /view==='requests' && <Worker section="requests"\/>/)
+  const worker = source('Worker.tsx')
+  assert.match(worker, /api\('\/worker\/requests'\)/)
+  assert.match(worker, /No work requests yet/)
+  const localApi = source('demo.ts')
+  assert.match(localApi, /path === '\/worker\/requests' && method === 'GET'[\s\S]*?requireRole\('worker'\)[\s\S]*?return \[\] as T/)
+})
+
 test('failed data loads do not render success-shaped empty states', () => {
   assert.match(source('Customer.tsx'), /!requests\.length && !error && <EmptyState/)
   assert.match(source('Worker.tsx'), /!cases\.length && !error && <EmptyState/)

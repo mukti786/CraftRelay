@@ -110,12 +110,21 @@ test('English/Hindi switching updates representative page text and stored prefer
     assert.match(renderWorkerHeading(), /Worker profile/)
     assert.equal(i18n.translated('Assessment queue', 'hi'), 'आकलन कतार')
     assert.equal(i18n.translated('Assessment queue', 'en'), 'Assessment queue')
+    assert.equal(i18n.translated('Work requests', 'hi'), 'काम के अनुरोध')
+    assert.equal(i18n.translated('Work requests', 'en'), 'Work requests')
     assert.equal(i18n.translated('Worker login', 'hi'), 'कामगार प्रवेश')
     assert.equal(i18n.translated('Assessor login', 'hi'), 'मूल्यांकनकर्ता प्रवेश')
     assert.equal(i18n.translated('Worker login', 'en'), 'Worker login')
     assert.equal(i18n.translated('Sign-in here is simulated and does not verify identity. Changes are saved in this browser. Evidence files are not stored.', 'hi'), 'यहाँ प्रवेश प्रक्रिया अनुकरणीय है और पहचान सत्यापित नहीं करती। बदलाव इसी ब्राउज़र में सहेजे जाते हैं। प्रमाण फ़ाइलें संग्रहीत नहीं होतीं।')
     assert.equal(i18n.translated('File details only; the original file is not stored here.', 'hi'), 'केवल फ़ाइल का विवरण; मूल फ़ाइल यहाँ संग्रहीत नहीं है।')
     assert.equal(i18n.translated('IN PROGRESS', 'hi'), 'प्रगति पर')
+
+    const localApi = await vite.ssrLoadModule('/src/demo.ts')
+    localApi.resetDemoState()
+    localApi.loginDemoRole('worker')
+    assert.deepEqual(await localApi.demoApi('/worker/requests'), [])
+    localApi.loginDemoRole('assessor')
+    await assert.rejects(() => localApi.demoApi('/worker/requests'), error => error.status === 403)
   } finally {
     await vite.close()
     delete globalThis.localStorage

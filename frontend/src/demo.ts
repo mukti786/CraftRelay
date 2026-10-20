@@ -163,6 +163,13 @@ export async function demoApi<T>(path: string, options: RequestInit = {}): Promi
   }
   if (path === '/auth/logout' && method === 'POST') { state.activeRole = null; writeState(state); return undefined as T }
 
+  if (path === '/worker/requests' && method === 'GET') {
+    requireRole('worker')
+    // This local workspace has no customer request records. Return the real empty
+    // state so the worker page can render its empty-state UI without a fake API error.
+    return [] as T
+  }
+
   if (path === '/worker/profile' && method === 'GET') {
     const { state: active } = requireRole('worker')
     const verified = active.cases.some(item => item.worker_id === active.profile.id && item.status === 'VERIFIED')

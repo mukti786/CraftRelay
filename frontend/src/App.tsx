@@ -47,7 +47,7 @@ function AppWorkspace() {
   if (sessionError) return <Localized><main className="session-recovery"><section className="session-recovery-card" aria-labelledby="session-error-title"><h1 id="session-error-title">Could not connect to CraftRelay</h1><Feedback>Check your connection and try again.</Feedback><button type="button" className="button primary" onClick={() => void loadSession()}>Retry</button></section></main></Localized>
   if (!user) return <Localized><AuthScreen mode={mode} setMode={setMode} onAuth={setUser} error={error} setError={setError} /></Localized>
   const tabs: { key: View; label: string; icon: string }[] = user.role === 'worker'
-    ? [{key:'home',label:'Overview',icon:'⌂'},{key:'profile',label:'My profile',icon:'◉'},{key:'assessment',label:'Skill assessment',icon:'◇'},...(!DEMO_MODE ? [{key:'requests' as View,label:'Work requests',icon:'↗'}] : [])]
+    ? [{key:'home',label:'Overview',icon:'⌂'},{key:'profile',label:'My profile',icon:'◉'},{key:'assessment',label:'Skill assessment',icon:'◇'},{key:'requests',label:'Work requests',icon:'↗'}]
     : user.role === 'assessor'
       ? [{key:'home',label:'Overview',icon:'⌂'},{key:'assessment',label:'Assessment queue',icon:'◇'}]
       : user.role === 'customer'
@@ -62,7 +62,7 @@ function AppWorkspace() {
     </aside>
     <main className="main-area"><header className="topbar"><div className="breadcrumb"><img src="/craftrelay-mark.svg" alt=""/> CraftRelay <span>/</span> <b>{tabs.find(x=>x.key===view)?.label ?? 'Overview'}</b></div><div className="top-actions"><label className="sr-only" htmlFor="language-select">Display language</label><select id="language-select" className="locale-select" aria-label="Display language" value={locale} onChange={event=>setLocale(event.target.value as 'en'|'hi'|'hne')}><option value="en">English</option><option value="hi">Hindi</option><option value="hne">Chhattisgarhi draft</option></select><span className={`draft-locale-note ${locale==='hne'?'visible':''}`} role="status">Draft: {missingDraftCount} labels remain in English for review</span><span className="avatar tiny" aria-hidden="true">{user.full_name.trim().charAt(0).toUpperCase()}</span></div></header>
       <div className="content">{error && <Feedback>{error}</Feedback>}{view==='home' && <Home user={user} setView={setView}/ >}
-      {user.role==='worker' && view==='profile' && <Worker section="profile"/>}{user.role==='worker' && view==='assessment' && <Worker section="assessment"/>}{user.role==='worker' && view==='requests' && !DEMO_MODE && <Worker section="requests"/>}
+      {user.role==='worker' && view==='profile' && <Worker section="profile"/>}{user.role==='worker' && view==='assessment' && <Worker section="assessment"/>}{user.role==='worker' && view==='requests' && <Worker section="requests"/>}
       {user.role==='assessor' && view==='assessment' && <Assessor/>}
       {user.role==='customer' && view==='market' && <Customer section="market"/>}{user.role==='customer' && view==='requests' && <Customer section="requests"/>}
       {user.role==='admin' && view==='users' && <Admin section="users"/>}{user.role==='admin' && view==='catalogue' && <Admin section="catalogue"/>}{user.role==='admin' && view==='audit' && <Admin section="audit"/>}</div>
