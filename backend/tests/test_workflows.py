@@ -118,7 +118,10 @@ def test_role_workflows_preserve_assessor_authority_and_review_separation(client
             return q.id, [c.id for c in criteria]
 
     qualification_id, criterion_ids = asyncio.run(create_data())
-    assert client.get("/api/customers/workers").json() == []
+    initial_discovery = client.get("/api/customers/workers").json()
+    assert len(initial_discovery) == 1
+    assert initial_discovery[0]["full_name"] == "Asha Worker"
+    assert initial_discovery[0]["verified_qualifications"] == []
     case_resp = client.post("/api/worker/cases", json={"qualification_id": qualification_id})
     assert case_resp.status_code == 200
     case_id = case_resp.json()["id"]
@@ -244,6 +247,161 @@ def test_role_workflows_preserve_assessor_authority_and_review_separation(client
         },
     )
     assert official_without_source.status_code == 422
+
+
+def test_customer_marketplace_ownership_validation_and_review_isolation(client):
+    def register(name, email, role):
+        response = client.post(
+            "/api/auth/register",
+            json={"full_name": name, "email": email, "password": "secure-pass-123", "role": role},
+        )
+        assert response.status_code == 200, response.text
+        return response.json()["id"]
+
+    register("Worker One", "worker-one@example.com", "worker")
+    assert (
+        client.put(
+            "/api/worker/profile",
+            json={
+                "trade": "  Carpentry  ",
+                "experience_years": 6,
+                "service_area": "  Raipur  ",
+                "bio": "  Repairs and fitting  ",
+                "available": True,
+            },
+        ).status_code
+        == 200
+    )
+    client.post("/api/auth/logout")
+    customer_id = register("Customer One", "customer-one@example.com", "customer")
+
+    public = client.get("/api/customers/workers?q=carpentry&area=raipur")
+    assert public.status_code == 200 and len(public.json()) == 1
+    profile = public.json()[0]
+    assert profile["full_name"] == "Worker One"
+    assert profile["trade"] == "Carpentry"
+    assert not {
+        "user_id",
+        "email",
+        "evidence",
+        "assessor_notes",
+        "reviewer_notes",
+    }.intersection(profile)
+    assert profile["verified_qualifications"] == []
+    assert "skills" in profile
+    assert client.get("/api/customers/workers?q=unmatched").json() == []
+
+    assert (
+        client.post(
+            "/api/customer/requests",
+            json={"worker_id": profile["id"], "description": "     ", "location": "Raipur"},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/api/customer/requests",
+            json={"worker_id": profile["id"], "description": "Repair my door", "location": "   "},
+        ).status_code
+        == 422
+    )
+
+    created = client.post(
+        "/api/customer/requests",
+        json={
+            "worker_id": profile["id"],
+            "description": "  Repair my door  ",
+            "location": "  Raipur  ",
+        },
+    )
+    assert created.status_code == 200, created.text
+    request_id = created.json()["id"]
+    assert (
+        client.post(
+            "/api/customer/requests",
+            json={
+                "worker_id": profile["id"],
+                "description": "Repair my door",
+                "location": "Raipur",
+            },
+        ).status_code
+        == 409
+    )
+    own_requests = client.get("/api/customer/requests")
+    assert own_requests.status_code == 200 and len(own_requests.json()) == 1
+    assert own_requests.json()[0]["description"] == "Repair my door"
+    assert own_requests.json()[0]["location"] == "Raipur"
+    assert (
+        client.post(f"/api/customer/requests/{request_id}/review", json={"rating": 5}).status_code
+        == 409
+    )
+
+    client.post("/api/auth/logout")
+    other_customer_id = register("Customer Two", "customer-two@example.com", "customer")
+    assert other_customer_id != customer_id
+    assert client.get("/api/customer/requests").json() == []
+    assert (
+        client.patch(f"/api/requests/{request_id}", json={"status": "CANCELLED"}).status_code == 403
+    )
+    assert (
+        client.post(f"/api/customer/requests/{request_id}/review", json={"rating": 5}).status_code
+        == 404
+    )
+
+    client.post("/api/auth/logout")
+    register("Worker Two", "worker-two@example.com", "worker")
+    assert client.get("/api/worker/requests").json() == []
+    assert (
+        client.patch(f"/api/requests/{request_id}", json={"status": "ACCEPTED"}).status_code == 403
+    )
+
+    client.post("/api/auth/logout")
+    assert (
+        client.post(
+            "/api/auth/login",
+            json={"email": "worker-one@example.com", "password": "secure-pass-123"},
+        ).status_code
+        == 200
+    )
+    assert (
+        client.patch(f"/api/requests/{request_id}", json={"status": "COMPLETED"}).status_code == 409
+    )
+    assert (
+        client.patch(f"/api/requests/{request_id}", json={"status": "ACCEPTED"}).status_code == 200
+    )
+    assert (
+        client.patch(f"/api/requests/{request_id}", json={"status": "COMPLETED"}).status_code == 200
+    )
+
+    client.post("/api/auth/logout")
+    assert (
+        client.post(
+            "/api/auth/login",
+            json={"email": "customer-one@example.com", "password": "secure-pass-123"},
+        ).status_code
+        == 200
+    )
+    reviewed = client.post(
+        f"/api/customer/requests/{request_id}/review",
+        json={"rating": 4, "comment": "  Good communication  "},
+    )
+    assert reviewed.status_code == 200
+    assert (
+        client.post(f"/api/customer/requests/{request_id}/review", json={"rating": 5}).status_code
+        == 409
+    )
+
+    async def review_is_separate_from_competency():
+        async with dbmod.SessionLocal() as session:
+            competency_count = await session.scalar(select(func.count()).select_from(Competency))
+            review = await session.scalar(
+                select(main.CustomerReview).where(main.CustomerReview.request_id == request_id)
+            )
+            return competency_count, review.comment
+
+    competency_count, comment = asyncio.run(review_is_separate_from_competency())
+    assert competency_count == 0
+    assert comment == "Good communication"
 
 
 def test_registration_login_password_hash_duplicates_and_session_lifecycle(client, monkeypatch):

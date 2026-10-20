@@ -96,6 +96,22 @@ const english = {
   'This case is not open for assessor decisions': 'This case is not open for assessor decisions',
   'All mandatory criteria need a current COMPETENT assessor decision; reconfirm decisions after new evidence': 'All mandatory criteria need a current COMPETENT assessor decision; reconfirm decisions after new evidence',
   'Last saved by': 'Last saved by',
+  'A service review can be left after the work is marked complete.': 'A service review can be left after the work is marked complete.',
+  'Customer service review': 'Customer service review',
+  'Describe the work you need': 'Describe the work you need',
+  'Describe your service experience': 'Describe your service experience',
+  'No verified qualifications listed. Profile skills are self-declared.': 'No verified qualifications listed. Profile skills are self-declared.',
+  'Self-declared skills': 'Self-declared skills',
+  'Awaiting worker response': 'Awaiting worker response',
+  'Accepted': 'Accepted',
+  'Declined': 'Declined',
+  'Completed': 'Completed',
+  'Cancelled': 'Cancelled',
+  'Sending…': 'Sending…',
+  'Saving…': 'Saving…',
+  'Request cancelled': 'Request cancelled',
+  'Request updated': 'Request updated',
+  'You already have an open request with this worker': 'You already have an open request with this worker',
 } as const
 
 const hindi: Record<keyof typeof english, string> = {
@@ -163,6 +179,22 @@ const hindi: Record<keyof typeof english, string> = {
   'All mandatory criteria need a current COMPETENT assessor decision; reconfirm decisions after new evidence': 'सभी अनिवार्य मानदंडों के लिए वर्तमान सक्षम मूल्यांकनकर्ता निर्णय आवश्यक हैं; नए साक्ष्य के बाद निर्णय की फिर पुष्टि करें।',
 
   'Last saved by': 'अंतिम बार सहेजने वाले',
+  'A service review can be left after the work is marked complete.': 'काम पूरा चिह्नित होने के बाद सेवा समीक्षा दी जा सकती है।',
+  'Customer service review': 'ग्राहक सेवा समीक्षा',
+  'Describe the work you need': 'आपको किस काम की ज़रूरत है, बताएँ',
+  'Describe your service experience': 'अपना सेवा अनुभव बताएँ',
+  'No verified qualifications listed. Profile skills are self-declared.': 'कोई सत्यापित योग्यता सूचीबद्ध नहीं है। प्रोफ़ाइल के कौशल स्वयं बताए गए हैं।',
+  'Self-declared skills': 'स्वयं बताए गए कौशल',
+  'Awaiting worker response': 'कामगार के जवाब की प्रतीक्षा',
+  'Accepted': 'स्वीकार किया गया',
+  'Declined': 'अस्वीकार किया गया',
+  'Completed': 'पूरा हुआ',
+  'Cancelled': 'रद्द किया गया',
+  'Sending…': 'भेज रहे हैं…',
+  'Saving…': 'सहेज रहे हैं…',
+  'Request cancelled': 'अनुरोध रद्द किया गया',
+  'Request updated': 'अनुरोध अपडेट किया गया',
+  'You already have an open request with this worker': 'इस कामगार को आपका एक खुला अनुरोध पहले से है',
 }
 
 const draft: Partial<Record<keyof typeof english, string>> = {

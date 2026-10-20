@@ -6,7 +6,17 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import jwt
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pwdlib import PasswordHash
@@ -153,6 +163,15 @@ class ServiceInput(BaseModel):
     description: str = Field(min_length=5, max_length=2000)
     location: str = Field(min_length=2, max_length=200)
 
+    @field_validator("description", "location")
+    @classmethod
+    def normalize_service_text(cls, value: str, info):
+        cleaned = value.strip()
+        minimum = 5 if info.field_name == "description" else 2
+        if len(cleaned) < minimum:
+            raise ValueError(f"{info.field_name.replace('_', ' ').capitalize()} is too short")
+        return cleaned
+
 
 class ServiceStatusInput(BaseModel):
     status: str = Field(pattern="^(ACCEPTED|DECLINED|COMPLETED|CANCELLED)$")
@@ -161,6 +180,11 @@ class ServiceStatusInput(BaseModel):
 class ReviewInput(BaseModel):
     rating: int = Field(ge=1, le=5)
     comment: str = Field(default="", max_length=2000)
+
+    @field_validator("comment")
+    @classmethod
+    def normalize_review_comment(cls, value: str) -> str:
+        return value.strip()
 
 
 class UserStatusInput(BaseModel):
@@ -1015,13 +1039,16 @@ async def get_evidence_file(
 
 
 @app.get("/api/customers/workers")
-async def discover_workers(q: str = "", area: str = "", db: AsyncSession = Depends(get_db)):
+async def discover_workers(
+    q: str = Query(default="", max_length=120),
+    area: str = Query(default="", max_length=160),
+    db: AsyncSession = Depends(get_db),
+):
     profiles = (
         await db.scalars(
             select(WorkerProfile)
-            .join(Competency, Competency.worker_id == WorkerProfile.id)
             .where(WorkerProfile.available.is_(True))
-            .distinct()
+            .order_by(WorkerProfile.id)
         )
     ).all()
     out = []
@@ -1040,11 +1067,14 @@ async def discover_workers(q: str = "", area: str = "", db: AsyncSession = Depen
             await db.scalars(select(DeclaredSkill).where(DeclaredSkill.worker_id == profile.id))
         ).all()
         record = public_profile(profile, account, skills, len(quals))
+        record.pop("user_id", None)
         record["verified_qualifications"] = [
             {
                 "title": qual.title,
                 "code": qual.code,
                 "version": qual.version,
+                "source_name": qual.source_name,
+                "source_url": qual.source_url,
                 "official": qual.official,
             }
             for _, qual in quals
@@ -1052,6 +1082,7 @@ async def discover_workers(q: str = "", area: str = "", db: AsyncSession = Depen
         hay = " ".join(
             [account.full_name, profile.trade, profile.service_area, profile.bio]
             + [s.name for s in skills]
+            + [qual.title for _, qual in quals]
         ).lower()
         if q.strip() and q.strip().lower() not in hay:
             continue
@@ -1070,6 +1101,20 @@ async def create_request(
     profile = await db.get(WorkerProfile, payload.worker_id)
     if not profile or not profile.available:
         raise HTTPException(404, "Worker is unavailable")
+    worker = await db.get(User, profile.user_id)
+    if not worker or not worker.active or worker.role != "worker":
+        raise HTTPException(404, "Worker is unavailable")
+    duplicate = await db.scalar(
+        select(ServiceRequest).where(
+            ServiceRequest.customer_id == user.id,
+            ServiceRequest.worker_id == profile.id,
+            ServiceRequest.description == payload.description,
+            ServiceRequest.location == payload.location,
+            ServiceRequest.status.in_(("REQUESTED", "ACCEPTED")),
+        )
+    )
+    if duplicate:
+        raise HTTPException(409, "You already have an open request with this worker")
     request = ServiceRequest(
         customer_id=user.id,
         worker_id=profile.id,
@@ -1104,6 +1149,8 @@ async def customer_requests(
                 "id": row.id,
                 "worker_id": p.id,
                 "worker_name": w.full_name,
+                "worker_trade": p.trade,
+                "worker_service_area": p.service_area,
                 "description": row.description,
                 "location": row.location,
                 "status": row.status,
@@ -1197,10 +1244,14 @@ async def review_request(
         customer_id=user.id,
         worker_id=row.worker_id,
         rating=payload.rating,
-        comment=payload.comment.strip(),
+        comment=payload.comment,
     )
     db.add(review)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(409, "This request has already been reviewed") from exc
     await audit(db, user, "customer.review.created", "customer_review", review.id)
     await db.commit()
     return {"id": review.id, "rating": review.rating}

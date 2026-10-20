@@ -41,4 +41,4 @@ export const json = (value: unknown) => JSON.stringify(value)
 export type User = { id: string; email: string; full_name: string; role: 'worker' | 'assessor' | 'customer' | 'admin' }
 export type Qualification = { id: string; code: string; version: string; title: string; source_name: string; source_url: string; official: boolean; criterion_count?: number }
 export type Criterion = { id: string; code: string; description: string; mandatory: boolean; requires_practical: boolean; evidence_count?: number }
-export type Worker = { id: string; full_name: string; trade: string; experience_years: number; service_area: string; bio: string; available: boolean; skills: {id:string;name:string;years_experience:number}[]; verified_qualifications: number | {title:string;code:string;version:string;official:boolean}[] }
+export type Worker = { id: string; full_name: string; trade: string; experience_years: number; service_area: string; bio: string; available: boolean; skills: {id:string;name:string;years_experience:number}[]; verified_qualifications: number | {title:string;code:string;version:string;source_name:string;source_url:string;official:boolean}[] }
