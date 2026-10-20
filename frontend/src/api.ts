@@ -1,5 +1,12 @@
 export const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message)
+    this.name = 'ApiError'
+  }
+}
+
 export function upload<T>(path: string, body: FormData, onProgress: (percentage: number) => void): Promise<T> {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest()
@@ -15,7 +22,7 @@ export function upload<T>(path: string, body: FormData, onProgress: (percentage:
       try { response = JSON.parse(request.responseText) as typeof response } catch { /* use status text */ }
       if (request.status < 200 || request.status >= 300) {
         const detail = response.detail
-        reject(new Error(typeof detail === 'string' ? detail : `Upload failed (${request.status})`))
+        reject(new ApiError(typeof detail === 'string' ? detail : `Upload failed (${request.status})`, request.status))
         return
       }
       if (request.status === 204) resolve(undefined as T)
@@ -32,7 +39,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   if (!response.ok) {
     let message = `Request failed (${response.status})`
     try { const data = await response.json(); message = data.detail ?? message } catch { /* keep status message */ }
-    throw new Error(message)
+    throw new ApiError(message, response.status)
   }
   if (response.status === 204) return undefined as T
   return response.json() as Promise<T>

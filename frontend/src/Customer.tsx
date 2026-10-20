@@ -183,7 +183,7 @@ export default function Customer({ section }: { section: 'market' | 'requests' }
         </form>}
         {request.review && <div className="review-saved" aria-label="Customer service review">★ {request.review.rating}/5 · {request.review.comment || 'No comment'}</div>}
       </article>)}
-      {!requests.length && <EmptyState icon="↗" title="No service requests yet" description="Find a worker and send a request to begin." />}
+      {!requests.length && !error && <EmptyState icon="↗" title="No service requests yet" description="Find a worker and send a request to begin." />}
     </div>
   </>
 }

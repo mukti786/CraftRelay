@@ -187,6 +187,12 @@ const english = {
   'No AI suggestion has been generated for this case.': 'No AI suggestion has been generated for this case.',
   '· Evidence items:': '· Evidence items:',
   'Checking AI assistance availability…': 'Checking AI assistance availability…',
+  'Primary navigation': 'Primary navigation',
+  'Role:': 'Role:',
+  'Could not connect to CraftRelay': 'Could not connect to CraftRelay',
+  'Check your connection and try again.': 'Check your connection and try again.',
+  'Retry': 'Retry',
+  'Could not sign out. Check your connection and try again.': 'Could not sign out. Check your connection and try again.',
 } as const
 
 const hindi: Record<keyof typeof english, string> = {
@@ -345,6 +351,12 @@ const hindi: Record<keyof typeof english, string> = {
   'No AI suggestion has been generated for this case.': 'इस मामले के लिए कोई AI सुझाव नहीं बनाया गया है।',
   '· Evidence items:': '· प्रमाण वस्तुएँ:',
   'Checking AI assistance availability…': 'AI सहायता की उपलब्धता जाँची जा रही है…',
+  'Primary navigation': 'मुख्य नेविगेशन',
+  'Role:': 'भूमिका:',
+  'Could not connect to CraftRelay': 'CraftRelay से कनेक्ट नहीं हो सका',
+  'Check your connection and try again.': 'अपना कनेक्शन जाँचें और फिर कोशिश करें।',
+  'Retry': 'फिर कोशिश करें',
+  'Could not sign out. Check your connection and try again.': 'साइन आउट नहीं हो सका। कनेक्शन जाँचें और फिर कोशिश करें।',
 }
 
 const draft: Partial<Record<keyof typeof english, string>> = {

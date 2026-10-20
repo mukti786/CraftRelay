@@ -188,7 +188,7 @@ export default function Worker({ section }: { section: 'profile' | 'assessment' 
       {selectedQualification.criteria.length > 0 && !selectedQualification.criteria.some(criterion => criterion.mandatory) && <p className="warning-note">No mandatory criteria are available for this version.</p>}
     </section>}
     {!quals.length && <EmptyState title="No qualifications available" description="An administrator must publish a versioned qualification before you can start an assessment." />}
-    {quals.length > 0 && !cases.length && <EmptyState title="No assessments yet" description="Choose a qualification version to begin sharing evidence." />}
+    {quals.length > 0 && !cases.length && !error && <EmptyState title="No assessments yet" description="Choose a qualification version to begin sharing evidence." />}
     {cases.map(item => <section className="case-section" key={item.id}>
       <div className="case-title"><div><span className="eyebrow">{item.qualification.code} · VERSION {item.qualification.version}</span><h2>{item.qualification.title}</h2>
         <p className="subtle">Source: {item.qualification.source_name}{item.qualification.source_url && <> · <a href={item.qualification.source_url} target="_blank" rel="noreferrer">View source ↗</a></>}
