@@ -112,6 +112,8 @@ const english = {
   'Request cancelled': 'Request cancelled',
   'Request updated': 'Request updated',
   'You already have an open request with this worker': 'You already have an open request with this worker',
+  'Describe the work in at least five characters': 'Describe the work in at least five characters',
+  'Enter a job location with at least two characters': 'Enter a job location with at least two characters',
 } as const
 
 const hindi: Record<keyof typeof english, string> = {
@@ -195,6 +197,8 @@ const hindi: Record<keyof typeof english, string> = {
   'Request cancelled': 'अनुरोध रद्द किया गया',
   'Request updated': 'अनुरोध अपडेट किया गया',
   'You already have an open request with this worker': 'इस कामगार को आपका एक खुला अनुरोध पहले से है',
+  'Describe the work in at least five characters': 'काम का विवरण कम से कम पाँच अक्षरों में लिखें',
+  'Enter a job location with at least two characters': 'काम का स्थान कम से कम दो अक्षरों में लिखें',
 }
 
 const draft: Partial<Record<keyof typeof english, string>> = {

@@ -56,11 +56,21 @@ export default function Customer({ section }: { section: 'market' | 'requests' }
     const data = new FormData(form)
     setError('')
     setNotice('')
+    const description = String(data.get('description') || '').trim()
+    const location = String(data.get('location') || '').trim()
+    if (description.length < 5) {
+      setError('Describe the work in at least five characters')
+      return
+    }
+    if (location.length < 2) {
+      setError('Enter a job location with at least two characters')
+      return
+    }
     setBusyId(worker.id)
     try {
       await api('/customer/requests', {
         method: 'POST',
-        body: json({ worker_id: worker.id, description: data.get('description'), location: data.get('location') }),
+        body: json({ worker_id: worker.id, description, location }),
       })
       setNotice(`Request sent to ${worker.full_name}`)
       form.reset()
@@ -138,7 +148,7 @@ export default function Customer({ section }: { section: 'market' | 'requests' }
         </div>}
         {Array.isArray(worker.verified_qualifications) && worker.verified_qualifications.map(qualification => <div className="qualification-badge" key={`${qualification.code}-${qualification.version}`}>
           ✓ {qualification.title} · {qualification.code} v{qualification.version}{!qualification.official ? ' · illustrative' : ''}
-          <small>{qualification.source_name}{qualification.source_url && <> · <a href={qualification.source_url} target="_blank" rel="noreferrer">Source</a></>}</small>
+          <small>{qualification.source_name}{qualification.source_url.startsWith('https://') && <> · <a href={qualification.source_url} target="_blank" rel="noreferrer">Source</a></>}</small>
         </div>)}
         {(!Array.isArray(worker.verified_qualifications) || worker.verified_qualifications.length === 0) && <p className="subtle">No verified qualifications listed. Profile skills are self-declared.</p>}
         <form className="contact-form" onSubmit={event => { event.preventDefault(); void submitRequest(worker, event.currentTarget) }}>
