@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 352 58" role="img" aria-labelledby="title desc">
+  <title id="title">CraftRelay</title><desc id="desc">CraftRelay, Proven Skills. Trusted Services.</desc>
+  <defs><linearGradient id="c" x1="5" y1="4" x2="44" y2="44" gradientUnits="userSpaceOnUse"><stop stop-color="#1664B8"/><stop offset="1" stop-color="#17AFC3"/></linearGradient></defs>
+  <rect x="1" y="5" width="48" height="48" rx="15" fill="url(#c)"/>
+  <path d="M28.1 15.4h-7.2a7.7 7.7 0 1 0 0 15.4h7.2v-5.1h-7.2a2.6 2.6 0 1 1 0-5.2h7.2zm-7 7.8h7.1a7.7 7.7 0 1 1 0 15.4h-7.1v-5.1h7.1a2.6 2.6 0 0 0 0-5.2h-7.1z" fill="#fff"/>
+  <path d="m18.5 27.1 13-4.4v5.5l-13 4.3z" fill="#BDEFF0"/>
+  <text x="64" y="40" fill="#F2F7FF" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="24" font-weight="750" letter-spacing="-.8">CraftRelay</text>
+</svg>
