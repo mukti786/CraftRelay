@@ -124,12 +124,28 @@ class EvidenceInput(BaseModel):
 
 class ReviewEvidenceInput(BaseModel):
     status: str = Field(pattern="^(ACCEPTED|NEEDS_MORE)$")
-    notes: str = Field(default="", max_length=2000)
+    notes: str = Field(min_length=3, max_length=2000)
+
+    @field_validator("notes")
+    @classmethod
+    def require_review_reason(cls, value: str) -> str:
+        notes = value.strip()
+        if len(notes) < 3:
+            raise ValueError("Please provide a clear reason of at least three characters")
+        return notes
 
 
 class DecisionInput(BaseModel):
     result: str = Field(pattern="^(COMPETENT|NOT_YET)$")
     notes: str = Field(min_length=3, max_length=2000)
+
+    @field_validator("notes")
+    @classmethod
+    def require_decision_reason(cls, value: str) -> str:
+        notes = value.strip()
+        if len(notes) < 3:
+            raise ValueError("Please provide a clear decision note of at least three characters")
+        return notes
 
 
 class ServiceInput(BaseModel):
@@ -687,10 +703,27 @@ async def upload_evidence(
     return {"id": item.id, "review_status": item.review_status, "size_bytes": item.size_bytes}
 
 
+def decision_needs_reconfirmation(
+    decision: CriterionDecision | None, evidence: list[Evidence]
+) -> bool:
+    if decision is None:
+        return True
+    latest_upload = max((item.uploaded_at for item in evidence), default=None)
+    if latest_upload is None:
+        return False
+    decision_at = decision.updated_at
+    if decision_at.tzinfo is not None:
+        decision_at = decision_at.replace(tzinfo=None)
+    if latest_upload.tzinfo is not None:
+        latest_upload = latest_upload.replace(tzinfo=None)
+    return decision_at < latest_upload
+
+
 @app.get("/api/assessor/cases")
 async def assessor_cases(
     user: User = Depends(require("assessor")), db: AsyncSession = Depends(get_db)
 ):
+    # No assignment entity exists yet: active assessors may review the shared submitted queue.
     cases = (
         await db.scalars(
             select(AssessmentCase)
@@ -710,15 +743,45 @@ async def assessor_cases(
         decisions = (
             await db.scalars(select(CriterionDecision).where(CriterionDecision.case_id == case.id))
         ).all()
+        skills = (
+            await db.scalars(select(DeclaredSkill).where(DeclaredSkill.worker_id == profile.id))
+        ).all()
+        decision_by_criterion = {item.criterion_id: item for item in decisions}
+        decision_assessor_names = {}
+        for decision in decisions:
+            assessor = await db.get(User, decision.assessor_id)
+            decision_assessor_names[decision.criterion_id] = (
+                assessor.full_name if assessor else "Unavailable"
+            )
+        evidence_by_criterion: dict[str, list[Evidence]] = {}
+        for item in evidence:
+            evidence_by_criterion.setdefault(item.criterion_id, []).append(item)
+        mandatory = [item for item in criteria if item.mandatory]
+        ready_count = sum(
+            1
+            for criterion in mandatory
+            if any(
+                item.criterion_id == criterion.id and item.review_status != "NEEDS_MORE"
+                for item in evidence
+            )
+        )
         out.append(
             {
                 "id": case.id,
                 "status": case.status,
+                "submitted_criteria": ready_count,
+                "mandatory_criteria": len(mandatory),
                 "worker": {
                     "id": profile.id,
                     "name": worker.full_name,
                     "trade": profile.trade,
+                    "experience_years": profile.experience_years,
                     "service_area": profile.service_area,
+                    "bio": profile.bio,
+                    "skills": [
+                        {"name": skill.name, "years_experience": skill.years_experience}
+                        for skill in skills
+                    ],
                 },
                 "qualification": {
                     "id": q.id,
@@ -731,32 +794,40 @@ async def assessor_cases(
                 },
                 "criteria": [
                     {
-                        "id": c.id,
-                        "code": c.code,
-                        "description": c.description,
-                        "mandatory": c.mandatory,
-                        "requires_practical": c.requires_practical,
+                        "id": criterion.id,
+                        "code": criterion.code,
+                        "description": criterion.description,
+                        "mandatory": criterion.mandatory,
+                        "requires_practical": criterion.requires_practical,
                         "evidence": [
                             {
-                                "id": e.id,
-                                "description": e.description,
-                                "original_name": e.original_name,
-                                "review_status": e.review_status,
-                                "reviewer_notes": e.reviewer_notes,
+                                "id": item.id,
+                                "description": item.description,
+                                "original_name": item.original_name,
+                                "review_status": item.review_status,
+                                "reviewer_notes": item.reviewer_notes,
+                                "uploaded_at": item.uploaded_at.isoformat(),
                             }
-                            for e in evidence
-                            if e.criterion_id == c.id
+                            for item in evidence_by_criterion.get(criterion.id, [])
                         ],
-                        "decision": next(
-                            (
-                                {"result": d.result, "notes": d.notes}
-                                for d in decisions
-                                if d.criterion_id == c.id
-                            ),
-                            None,
+                        "decision": (
+                            {
+                                "result": decision_by_criterion[criterion.id].result,
+                                "notes": decision_by_criterion[criterion.id].notes,
+                                "assessor_name": decision_assessor_names[criterion.id],
+                                "updated_at": decision_by_criterion[
+                                    criterion.id
+                                ].updated_at.isoformat(),
+                                "needs_reconfirmation": decision_needs_reconfirmation(
+                                    decision_by_criterion[criterion.id],
+                                    evidence_by_criterion.get(criterion.id, []),
+                                ),
+                            }
+                            if criterion.id in decision_by_criterion
+                            else None
                         ),
                     }
-                    for c in criteria
+                    for criterion in criteria
                 ],
             }
         )
@@ -782,7 +853,14 @@ async def assess_evidence(
         case.status = "NEEDS_MORE"
     elif case.status == "SUBMITTED":
         case.status = "IN_REVIEW"
-    await audit(db, user, "evidence.reviewed", "evidence", item.id, {"status": item.review_status})
+    await audit(
+        db,
+        user,
+        "evidence.reviewed",
+        "evidence",
+        item.id,
+        {"status": item.review_status, "notes": item.reviewer_notes},
+    )
     await db.commit()
     return {"id": item.id, "review_status": item.review_status}
 
@@ -806,6 +884,7 @@ async def decide_criterion(
             CriterionDecision.case_id == case_id, CriterionDecision.criterion_id == criterion_id
         )
     )
+    previous = None if decision is None else {"result": decision.result, "notes": decision.notes}
     if decision is None:
         decision = CriterionDecision(
             case_id=case_id,
@@ -828,7 +907,12 @@ async def decide_criterion(
         "assessment.criterion_decided",
         "criterion_decision",
         decision.id,
-        {"result": payload.result, "criterion_id": criterion_id},
+        {
+            "previous": previous,
+            "result": payload.result,
+            "notes": decision.notes,
+            "criterion_id": criterion_id,
+        },
     )
     await db.commit()
     return {"result": decision.result}
@@ -852,15 +936,25 @@ async def verify_case(
         await db.scalars(select(CriterionDecision).where(CriterionDecision.case_id == case.id))
     ).all()
     mapped = {d.criterion_id: d for d in decisions}
+    evidence = (await db.scalars(select(Evidence).where(Evidence.case_id == case.id))).all()
+    evidence_by_criterion: dict[str, list[Evidence]] = {}
+    for item in evidence:
+        evidence_by_criterion.setdefault(item.criterion_id, []).append(item)
     if case.status not in {"SUBMITTED", "IN_REVIEW"}:
         raise HTTPException(409, "The worker must submit this case before competency verification")
     if not criteria:
         raise HTTPException(409, "This qualification has no mandatory criteria to verify")
-    missing = [c.code for c in criteria if c.id not in mapped or mapped[c.id].result != "COMPETENT"]
+    missing = [
+        c.code
+        for c in criteria
+        if c.id not in mapped
+        or mapped[c.id].result != "COMPETENT"
+        or decision_needs_reconfirmation(mapped[c.id], evidence_by_criterion.get(c.id, []))
+    ]
     if missing:
         raise HTTPException(
             409,
-            "All mandatory criteria need a COMPETENT assessor decision",
+            "All mandatory criteria need a current COMPETENT assessor decision; reconfirm decisions after new evidence",
             headers={"X-Missing-Criteria": ", ".join(missing)},
         )
     prior = await db.scalar(select(Competency).where(Competency.case_id == case.id))
@@ -896,12 +990,16 @@ async def get_evidence_file(
     item = await db.get(Evidence, evidence_id)
     if not item:
         raise HTTPException(404, "Evidence not found")
+    case = await db.get(AssessmentCase, item.case_id)
+    if not case or case.worker_id != item.worker_id:
+        raise HTTPException(404, "Evidence not found")
     if user.role == "worker":
         profile = await worker_profile(db, user.id)
         if item.worker_id != profile.id:
             raise HTTPException(403, "Not authorized")
     elif user.role == "assessor":
-        pass
+        if case.status == "IN_PROGRESS":
+            raise HTTPException(403, "Evidence is not available until the worker submits the case")
     else:
         raise HTTPException(403, "Not authorized")
     path = Path(settings.evidence_dir) / item.stored_name

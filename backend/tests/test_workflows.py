@@ -5,7 +5,7 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 from pwdlib import PasswordHash
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -13,7 +13,16 @@ import app.db as dbmod
 from app import bootstrap, main
 from app.db import get_db
 from app.main import app
-from app.models import Criterion, Qualification, User
+from app.models import (
+    AuditEvent,
+    Competency,
+    Criterion,
+    CriterionDecision,
+    DeclaredSkill,
+    Qualification,
+    User,
+    WorkerProfile,
+)
 from app.settings import Settings, validate_settings
 
 
@@ -970,3 +979,281 @@ def test_bootstrap_refuses_to_promote_an_existing_non_admin(client, monkeypatch)
     )
     with pytest.raises(SystemExit, match="distinct BOOTSTRAP_ADMIN_EMAIL"):
         asyncio.run(bootstrap.main())
+
+
+def _prepare_assessor_case(client, code: str):
+    worker = client.post(
+        "/api/auth/register",
+        json={
+            "full_name": "Assessor Test Worker",
+            "email": f"worker-{code.lower()}@example.com",
+            "password": "secure-worker-pass",
+            "role": "worker",
+        },
+    )
+    assert worker.status_code == 200, worker.text
+    worker_id = worker.json()["id"]
+
+    async def seed():
+        async with dbmod.SessionLocal() as session:
+            profile = await session.scalar(
+                select(WorkerProfile).where(WorkerProfile.user_id == worker_id)
+            )
+            profile.trade = "Carpentry"
+            profile.experience_years = 8
+            profile.service_area = "Raipur"
+            profile.bio = "Eight years of declared field experience."
+            session.add(DeclaredSkill(worker_id=profile.id, name="Joinery", years_experience=6))
+            qualification = Qualification(
+                code=code,
+                version="2026.1",
+                title="Illustrative assessor test qualification",
+                source_name="Test fixture; not official",
+                source_url="",
+                official=False,
+            )
+            session.add(qualification)
+            await session.flush()
+            criterion = Criterion(
+                qualification_id=qualification.id,
+                code="C-01",
+                description="Demonstrate a safe, accurate woodworking joint",
+                mandatory=True,
+            )
+            unrelated_qualification = Qualification(
+                code=f"OTHER-{code}",
+                version="1",
+                title="Unrelated qualification",
+                source_name="Test fixture; not official",
+                official=False,
+            )
+            session.add(unrelated_qualification)
+            await session.flush()
+            unrelated_criterion = Criterion(
+                qualification_id=unrelated_qualification.id,
+                code="X-01",
+                description="Unrelated criterion",
+                mandatory=True,
+            )
+            assessor = User(
+                email=f"assessor-{code.lower()}@example.com",
+                full_name="Authorized Assessor",
+                password_hash=PasswordHash.recommended().hash("secure-assessor-pass"),
+                role="assessor",
+            )
+            session.add_all([criterion, unrelated_criterion, assessor])
+            await session.commit()
+            return qualification.id, criterion.id, unrelated_criterion.id, assessor.email
+
+    qualification_id, criterion_id, unrelated_criterion_id, assessor_email = asyncio.run(seed())
+    case = client.post("/api/worker/cases", json={"qualification_id": qualification_id})
+    assert case.status_code == 200, case.text
+    return worker_id, case.json()["id"], criterion_id, unrelated_criterion_id, assessor_email
+
+
+def _login(client, email: str, password: str):
+    client.post("/api/auth/logout")
+    response = client.post("/api/auth/login", json={"email": email, "password": password})
+    assert response.status_code == 200, response.text
+    return response
+
+
+def _upload_case_evidence(client, case_id: str, criterion_id: str, label: str):
+    response = client.post(
+        f"/api/worker/cases/{case_id}/evidence",
+        data={"criterion_id": criterion_id, "description": f"{label} evidence description"},
+        files={"file": (f"{label}.pdf", f"%PDF-1.4\\n{label}".encode(), "application/pdf")},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["id"]
+
+
+def test_assessor_queue_scopes_private_evidence_and_requires_explanations(client):
+    _worker_id, case_id, criterion_id, unrelated_criterion_id, assessor_email = (
+        _prepare_assessor_case(client, "ASSESSOR-SCOPE")
+    )
+    evidence_id = _upload_case_evidence(client, case_id, criterion_id, "first")
+    assert (
+        client.patch(
+            f"/api/assessor/evidence/{evidence_id}",
+            json={"status": "ACCEPTED", "notes": "Unauthorized worker."},
+        ).status_code
+        == 403
+    )
+    assert (
+        client.put(
+            f"/api/assessor/cases/{case_id}/criteria/{criterion_id}",
+            json={"result": "COMPETENT", "notes": "Unauthorized worker."},
+        ).status_code
+        == 403
+    )
+    assert client.post(f"/api/assessor/cases/{case_id}/verify").status_code == 403
+
+    _login(client, assessor_email, "secure-assessor-pass")
+    assert client.get(f"/api/evidence/{evidence_id}/file").status_code == 403
+
+    _login(client, "worker-assessor-scope@example.com", "secure-worker-pass")
+    submitted = client.post(f"/api/worker/cases/{case_id}/submit")
+    assert submitted.status_code == 200
+    _login(client, assessor_email, "secure-assessor-pass")
+
+    queue = client.get("/api/assessor/cases")
+    assert queue.status_code == 200
+    row = next(item for item in queue.json() if item["id"] == case_id)
+    assert row["submitted_criteria"] == row["mandatory_criteria"] == 1
+    assert row["worker"]["experience_years"] == 8
+    assert row["worker"]["skills"] == [{"name": "Joinery", "years_experience": 6}]
+    assert row["criteria"][0]["evidence"][0]["id"] == evidence_id
+    assert "stored_name" not in row["criteria"][0]["evidence"][0]
+    private_file = client.get(f"/api/evidence/{evidence_id}/file")
+    assert private_file.status_code == 200
+    assert private_file.headers["cache-control"] == "private, no-store"
+    assert private_file.headers["x-content-type-options"] == "nosniff"
+
+    assert (
+        client.patch(
+            f"/api/assessor/evidence/{evidence_id}", json={"status": "NEEDS_MORE", "notes": "  "}
+        ).status_code
+        == 422
+    )
+    assert (
+        client.put(
+            f"/api/assessor/cases/{case_id}/criteria/{criterion_id}",
+            json={"result": "COMPETENT", "notes": "   "},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.patch(
+            f"/api/assessor/evidence/{evidence_id}", json={"status": "ACCEPTED", "notes": "  "}
+        ).status_code
+        == 422
+    )
+    assert (
+        client.patch(
+            f"/api/assessor/evidence/{evidence_id}",
+            json={"status": "NEEDS_MORE", "notes": "Please show the joint measurement."},
+        ).status_code
+        == 200
+    )
+    assert (
+        client.put(
+            f"/api/assessor/cases/{case_id}/criteria/{unrelated_criterion_id}",
+            json={"result": "COMPETENT", "notes": "This criterion belongs elsewhere."},
+        ).status_code
+        == 404
+    )
+
+    customer = client.post(
+        "/api/auth/register",
+        json={
+            "full_name": "Customer",
+            "email": "customer-assessor-scope@example.com",
+            "password": "secure-customer-pass",
+            "role": "customer",
+        },
+    )
+    assert customer.status_code == 200
+    assert client.get(f"/api/evidence/{evidence_id}/file").status_code == 403
+    assert client.get("/api/assessor/cases").status_code == 403
+    assert (
+        client.patch(
+            f"/api/assessor/evidence/{evidence_id}",
+            json={"status": "ACCEPTED", "notes": "Customer is not authorized."},
+        ).status_code
+        == 403
+    )
+
+
+def test_assessor_reconfirms_decisions_after_worker_resubmits_evidence(client):
+    _worker_id, case_id, criterion_id, _, assessor_email = _prepare_assessor_case(
+        client, "ASSESSOR-RECONFIRM"
+    )
+    first_evidence_id = _upload_case_evidence(client, case_id, criterion_id, "original")
+    assert client.post(f"/api/worker/cases/{case_id}/submit").status_code == 200
+
+    _login(client, assessor_email, "secure-assessor-pass")
+    decision = client.put(
+        f"/api/assessor/cases/{case_id}/criteria/{criterion_id}",
+        json={"result": "COMPETENT", "notes": "The first sample meets the stated measure."},
+    )
+    assert decision.status_code == 200, decision.text
+    assessor_case = next(
+        item for item in client.get("/api/assessor/cases").json() if item["id"] == case_id
+    )
+    assert assessor_case["criteria"][0]["decision"]["assessor_name"] == "Authorized Assessor"
+    assert not assessor_case["criteria"][0]["decision"]["needs_reconfirmation"]
+    assert (
+        client.patch(
+            f"/api/assessor/evidence/{first_evidence_id}",
+            json={"status": "NEEDS_MORE", "notes": "Please provide a clearer close-up."},
+        ).status_code
+        == 200
+    )
+
+    _login(client, "worker-assessor-reconfirm@example.com", "secure-worker-pass")
+    case = client.get("/api/worker/cases").json()[0]
+    assert case["status"] == "NEEDS_MORE"
+    second_evidence_id = _upload_case_evidence(client, case_id, criterion_id, "replacement")
+    assert second_evidence_id != first_evidence_id
+    assert client.post(f"/api/worker/cases/{case_id}/submit").json()["status"] == "SUBMITTED"
+
+    _login(client, assessor_email, "secure-assessor-pass")
+    queue_row = next(
+        item for item in client.get("/api/assessor/cases").json() if item["id"] == case_id
+    )
+    assert queue_row["criteria"][0]["decision"]["needs_reconfirmation"] is True
+    assert client.post(f"/api/assessor/cases/{case_id}/verify").status_code == 409
+
+    reconfirmed = client.put(
+        f"/api/assessor/cases/{case_id}/criteria/{criterion_id}",
+        json={"result": "COMPETENT", "notes": "Reviewed the replacement sample; criterion met."},
+    )
+    assert reconfirmed.status_code == 200
+    verified = client.post(f"/api/assessor/cases/{case_id}/verify")
+    assert verified.status_code == 200 and verified.json()["verified"] is True
+    assert client.post(f"/api/assessor/cases/{case_id}/verify").status_code == 409
+    assert (
+        client.put(
+            f"/api/assessor/cases/{case_id}/criteria/{criterion_id}",
+            json={"result": "NOT_YET", "notes": "Cannot change a finalized decision."},
+        ).status_code
+        == 409
+    )
+    assert (
+        client.patch(
+            f"/api/assessor/evidence/{second_evidence_id}",
+            json={"status": "NEEDS_MORE", "notes": "Cannot change finalized evidence."},
+        ).status_code
+        == 409
+    )
+
+    async def persisted():
+        async with dbmod.SessionLocal() as session:
+            competency = await session.scalar(
+                select(Competency).where(Competency.case_id == case_id)
+            )
+            decision = await session.scalar(
+                select(CriterionDecision).where(
+                    CriterionDecision.case_id == case_id,
+                    CriterionDecision.criterion_id == criterion_id,
+                )
+            )
+            event_count = await session.scalar(
+                select(func.count())
+                .select_from(AuditEvent)
+                .where(AuditEvent.entity_id.in_([first_evidence_id, case_id]))
+            )
+            decision_event_count = await session.scalar(
+                select(func.count())
+                .select_from(AuditEvent)
+                .where(AuditEvent.action == "assessment.criterion_decided")
+            )
+            return competency, decision, event_count, decision_event_count
+
+    competency, saved_decision, event_count, decision_event_count = asyncio.run(persisted())
+    assert competency is not None and competency.verified_by
+    assert saved_decision is not None and saved_decision.result == "COMPETENT"
+    assert saved_decision.notes == "Reviewed the replacement sample; criterion met."
+    assert event_count >= 1
+    assert decision_event_count == 2
