@@ -1,8 +1,0 @@
-node_modules/
-.expo/
-dist/
-android/
-ios/
-web-build/
-*.orig.*
-.env

@@ -1,6 +1,0 @@
-# CraftRelay — backend dev dependencies (not installed in production)
-pytest==8.3.3
-pytest-asyncio==0.24.0
-coverage==7.6.3
-ruff==0.7.1
-mypy==1.13.0
