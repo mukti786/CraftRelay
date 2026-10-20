@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { API, api, json, DEMO_MODE } from './api'
 import { useLocale, formatDate } from './i18n'
+import { Localized } from './i18n'
 import { EmptyState, Feedback, LoadingState } from './ui'
 
 type Evidence = {
@@ -186,7 +187,7 @@ export default function Assessor() {
     return latest?.review?.result === 'SATISFACTORY'
   })
 
-  return <>
+  return <Localized><>
     <div className="page-heading">
       <div><p className="eyebrow">HUMAN REVIEW</p><h1>Assessment queue</h1><p className="subtle">Review the submitted case and make each competency decision yourself.</p></div>
       <span className="status-tag">{openCount} OPEN CASES</span>
@@ -245,7 +246,7 @@ export default function Assessor() {
         </div>
       </section> : <EmptyState title="Select a case" description="Assessment cases appear here when workers submit evidence." />}
     </div>
-  </>
+  </></Localized>
 }
 
 function AiSuggestionCard({ suggestion, criteria, disabled, locale, onDisposition }: {
@@ -274,7 +275,7 @@ function AiSuggestionCard({ suggestion, criteria, disabled, locale, onDispositio
     finally { setBusy(false) }
   }
 
-  return <article className="ai-suggestion-card">
+  return <Localized><article className="ai-suggestion-card">
     <div className="ai-suggestion-meta"><b>{suggestion.label}</b><span className="status-tag">{dispositionLabel}</span></div>
     <p className="subtle">{suggestion.provider_id}{suggestion.model_id ? ` · ${suggestion.model_id}` : ''} · {suggestion.template_version} · {formatDate(suggestion.response_at, locale, true)}</p>
     <p className="subtle">Qualification version: {suggestion.qualification_id} · {suggestion.qualification_version}</p>
@@ -298,7 +299,7 @@ function AiSuggestionCard({ suggestion, criteria, disabled, locale, onDispositio
         : <><button type="button" className="button secondary small-button" disabled={disabled || busy} onClick={() => void save('ACCEPTED')}>Accept suggestion</button><button type="button" className="button secondary small-button" disabled={disabled || busy} onClick={() => setEditing(true)}>Edit suggestion</button><button type="button" className="button secondary small-button" disabled={disabled || busy} onClick={() => void save('DISMISSED')}>Dismiss suggestion</button></>}
     </div>}
     {error && <Feedback>{error}</Feedback>}
-  </article>
+  </article></Localized>
 }
 
 function assistanceEvidence(item: Case) {
@@ -364,7 +365,7 @@ function PracticalTaskReview({ task, disabled, onReview }: {
     }
   }
 
-  return <section className="panel practical-task-card" aria-labelledby={`assessor-task-${task.id}`}>
+  return <Localized><section className="panel practical-task-card" aria-labelledby={`assessor-task-${task.id}`}>
     <div className="catalogue-detail-head"><div><p className="eyebrow">PRACTICAL TASK · {task.official ? 'SOURCED' : 'ILLUSTRATIVE'}</p><h4 id={`assessor-task-${task.id}`}>{task.title}</h4></div><span className={`status-tag ${task.official ? 'verified' : 'muted'}`}>{task.official ? 'Sourced task' : 'Illustrative, not official'}</span></div>
     <p>{task.instructions}</p>
     <p className="subtle"><b>Rubric:</b> {task.rubric}</p>
@@ -383,7 +384,7 @@ function PracticalTaskReview({ task, disabled, onReview }: {
     </div>}
     {!pending && task.attempts.length > 0 && <p className="subtle">All submitted attempts have been reviewed. The latest review is used for this qualification case.</p>}
     {error && <Feedback>{error}</Feedback>}
-  </section>
+  </section></Localized>
 }
 
 function EvidenceReview({ evidence, disabled, locale, onSave }: { evidence: Evidence; disabled: boolean; locale: 'en' | 'hi' | 'hne'; onSave: (status: string, notes: string) => Promise<void> }) {
@@ -429,7 +430,7 @@ function EvidenceReview({ evidence, disabled, locale, onSave }: { evidence: Evid
   }
 
   const validNotes = notes.trim().length >= 3
-  return <div className="review-evidence-row">
+  return <Localized><div className="review-evidence-row">
     <div className="evidence-file"><span aria-hidden="true">▧</span><div><b>{evidence.original_name}</b><small>{evidence.description}</small><small>{formatDate(evidence.uploaded_at, locale, true)} · {evidence.review_status.replaceAll('_', ' ')}</small>{evidence.reviewer_notes && <small>{evidence.reviewer_notes}</small>}</div>{DEMO_MODE ? <small>Demo metadata only — no file was uploaded or stored.</small> : <button type="button" className="text-button" disabled={disabled || downloading} onClick={() => void download()}>{downloading ? 'Loading…' : 'Open private evidence'}</button>}</div>
     <div className="evidence-review-controls">
       <label>Evidence review<select value={status} onChange={event => setStatus(event.target.value)} disabled={disabled || saving}><option value="ACCEPTED">Accept evidence</option><option value="NEEDS_MORE">Needs more</option></select></label>
@@ -438,7 +439,7 @@ function EvidenceReview({ evidence, disabled, locale, onSave }: { evidence: Evid
       <button type="button" className="text-button" disabled={disabled || saving || !validNotes} onClick={() => void save()}>{saving ? 'Saving…' : 'Save evidence review'}</button>
       {error && <Feedback>{error}</Feedback>}
     </div>
-  </div>
+  </div></Localized>
 }
 
 function DecisionEditor({ criterion, disabled, onSave }: { criterion: Criterion; disabled: boolean; onSave: (result: string, notes: string) => Promise<void> }) {
@@ -459,12 +460,12 @@ function DecisionEditor({ criterion, disabled, onSave }: { criterion: Criterion;
     try { await onSave(result, notes.trim()) } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not save criterion decision') } finally { setSaving(false) }
   }
 
-  return <div className="decision-editor">
+  return <Localized><div className="decision-editor">
     <div><b>Assessor decision</b><small>Evidence review and formal competency decisions are separate records. Your decision is recorded with your account.</small>{criterion.decision && <small>Last saved by {criterion.decision.assessor_name} · {formatDate(criterion.decision.updated_at, locale, true)}</small>}{criterion.decision?.needs_reconfirmation && <small className="warning-note">New evidence arrived after the previous decision. Review it and save a current decision.</small>}</div>
     <label>Criterion outcome<select value={result} disabled={disabled || saving} onChange={event => setResult(event.target.value as 'COMPETENT' | 'NOT_YET')}><option value="NOT_YET">Not yet competent</option><option value="COMPETENT">Competent</option></select></label>
     <label>Decision notes<input value={notes} disabled={disabled || saving} onChange={event => setNotes(event.target.value)} minLength={3} maxLength={2000} aria-invalid={!validNotes} aria-describedby={`decision-note-${criterion.id}`} placeholder="Explain how the criterion was assessed" /></label>
     <small id={`decision-note-${criterion.id}`}>{validNotes ? 'A clear rationale is required and stored.' : 'Add at least three characters before saving.'}</small>
     <button type="button" className="button secondary small-button" disabled={disabled || saving || !validNotes} onClick={() => void save()}>{saving ? 'Saving…' : 'Save criterion decision'}</button>
     {error && <Feedback>{error}</Feedback>}
-  </div>
+  </div></Localized>
 }

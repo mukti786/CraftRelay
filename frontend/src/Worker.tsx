@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from 'react'
 import { api, json, upload, Criterion, Qualification, Worker as WorkerProfile, DEMO_MODE } from './api'
 import { EmptyState, Feedback, LoadingState } from './ui'
+import { Localized } from './i18n'
 
 type EvidenceRow = {
   id: string
@@ -106,7 +107,7 @@ export default function Worker({ section }: { section: 'profile' | 'assessment' 
 
   if (loading) return <LoadingState label={section === 'assessment' ? 'Loading qualifications…' : section === 'requests' ? 'Loading service requests…' : 'Loading your workspace…'} />
 
-  if (section === 'profile') return <>
+  if (section === 'profile') return <Localized><>
     <div className="page-heading">
       <div><p className="eyebrow">YOUR STORY</p><h1>Worker profile</h1><p className="subtle">Help customers understand your work and experience.</p></div>
       <span className="status-tag">WORKER</span>
@@ -152,9 +153,9 @@ export default function Worker({ section }: { section: 'profile' | 'assessment' 
           : <p className="empty-inline">No assessor-verified competencies yet.</p>}
       </section>
     </div>}
-  </>
+  </></Localized>
 
-  if (section === 'assessment') return <>
+  if (section === 'assessment') return <Localized><>
     <div className="page-heading">
       <div><p className="eyebrow">RECOGNITION OF PRIOR LEARNING</p><h1>Skill assessment</h1><p className="subtle">Choose a qualification version, then share evidence against its criteria for assessor review.</p></div>
       <span className="source-note">Only sourced qualifications are marked official.</span>
@@ -207,9 +208,9 @@ export default function Worker({ section }: { section: 'profile' | 'assessment' 
         await load(true)
       }} />)}</div>
     </section>)}
-  </>
+  </></Localized>
 
-  return <>
+  return <Localized><>
     <div className="page-heading"><div><p className="eyebrow">CUSTOMER CONNECTIONS</p><h1>Work requests</h1><p className="subtle">Respond to requests and keep service status up to date.</p></div></div>
     {error && <Feedback>{error}</Feedback>}{notice && <Feedback tone="success">{notice}</Feedback>}
     <div className="request-list">{requests.map(request => <article className="request-card" key={request.id}>
@@ -221,7 +222,7 @@ export default function Worker({ section }: { section: 'profile' | 'assessment' 
         {request.status === 'ACCEPTED' && <button className="button primary small-button" disabled={busy} onClick={() => void action(() => api(`/requests/${request.id}`, { method: 'PATCH', body: json({ status: 'COMPLETED' }) }), 'Request marked complete')}>Mark service complete</button>}
       </div>
     </article>)}{!requests.length && <EmptyState icon="↗" title="No work requests yet" description="Requests from customers will appear here." />}</div>
-  </>
+  </></Localized>
 }
 
 function SkillForm({ busy, onAdd }: { busy: boolean; onAdd: (name: string, years: number) => Promise<boolean> }) {
@@ -239,12 +240,12 @@ function SkillForm({ busy, onAdd }: { busy: boolean; onAdd: (name: string, years
     if (saved) form.reset()
     setSaving(false)
   }
-  return <form className="inline-form" onSubmit={event => void submit(event)}>
+  return <Localized><form className="inline-form" onSubmit={event => void submit(event)}>
     <label className="sr-only" htmlFor="declared-skill">Add a skill</label><input id="declared-skill" name="name" required minLength={2} maxLength={120} placeholder="Add a skill" aria-describedby={validation ? 'skill-validation' : undefined} />
     <label className="sr-only" htmlFor="skill-years">Years of experience</label><input id="skill-years" name="years" type="number" min="0" max="60" placeholder="Years" />
     <button className="button secondary" disabled={busy || saving}>{saving ? 'Saving…' : 'Add skill'}</button>
     {validation && <span id="skill-validation" className="form-error" role="alert">{validation}</span>}
-  </form>
+  </form></Localized>
 }
 
 function CriterionRow({ criterion, evidence, tasks, caseId, disabled, onUploaded }: {
@@ -281,7 +282,7 @@ function CriterionRow({ criterion, evidence, tasks, caseId, disabled, onUploaded
     }
   }
 
-  return <article className="criterion-row">
+  return <Localized><article className="criterion-row">
     <div className="criterion-head"><span className="criterion-code">{criterion.code}</span><span className="subtle small">{criterion.mandatory ? 'Required' : 'Optional'}{criterion.requires_practical ? ' · Practical' : ''}</span></div>
       <h3>{criterion.description}</h3>
     <div className="evidence-items">{evidence.map(item => <div className="evidence-item" key={item.id}>
@@ -304,7 +305,7 @@ function CriterionRow({ criterion, evidence, tasks, caseId, disabled, onUploaded
       {error && <span className="form-error" role="alert">{error}</span>}
       <small>{DEMO_MODE ? 'Demo only: PDF, JPEG, PNG, or WebP · max 20 MB. Only filename, type, size, and your note stay in this browser; the file itself is not uploaded or stored.' : 'PDF, JPEG, PNG, or WebP · max 20 MB · stored privately. Evidence is reviewed by an assessor.'}</small>
     </form>}
-  </article>
+  </article></Localized>
 }
 
 function TaskAttemptForm({ task, caseId, disabled, onUploaded }: {
@@ -344,7 +345,7 @@ function TaskAttemptForm({ task, caseId, disabled, onUploaded }: {
     }
   }
 
-  return <section className="panel practical-task-card" aria-labelledby={`task-${task.id}`}>
+  return <Localized><section className="panel practical-task-card" aria-labelledby={`task-${task.id}`}>
     <div className="catalogue-detail-head"><div><p className="eyebrow">PRACTICAL TASK</p><h4 id={`task-${task.id}`}>{task.title}</h4></div><span className={`status-tag ${task.official ? 'verified' : 'muted'}`}>{task.official ? 'Sourced task' : 'Illustrative, not official'}</span></div>
     <p>{task.instructions}</p>
     <p className="subtle"><b>Assessment rubric:</b> {task.rubric}</p>
@@ -367,5 +368,5 @@ function TaskAttemptForm({ task, caseId, disabled, onUploaded }: {
       <small>PDF, JPEG, PNG, or WebP · max 20 MB · stored privately. Evidence is reviewed by an authorized assessor.</small>
     </form>}
     {!disabled && latest && !canAttempt && <p className="subtle">This task has an assessor-reviewed attempt. A new attempt is available only if the assessor requests remediation.</p>}
-  </section>
+  </section></Localized>
 }

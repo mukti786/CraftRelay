@@ -4,6 +4,9 @@ import path from 'node:path'
 import process from 'node:process'
 import test from 'node:test'
 import ts from 'typescript'
+import React from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { createServer } from 'vite'
 
 const root = process.cwd()
 const localeSource = fs.readFileSync(path.join(root, 'src/i18n.tsx'), 'utf8')
@@ -55,7 +58,7 @@ test('draft locale omissions are explicit and visible to users', () => {
 
 test('language preference persists and switching does not key or remount workflow forms', () => {
   assert.match(localeSource, /localStorage\.getItem\(preferenceKey\)/)
-  assert.match(localeSource, /localStorage\.setItem\(preferenceKey, next\)/)
+  assert.match(localeSource, /localStorage\.setItem\(preferenceKey, locale\)/)
   const appSource = fs.readFileSync(path.join(root, 'src/App.tsx'), 'utf8')
   assert.match(appSource, /<LocaleProvider><AppWorkspace\/><\/LocaleProvider>/)
   assert.match(appSource, /value=\{locale\} onChange=\{event=>setLocale/)
@@ -65,6 +68,53 @@ test('language preference persists and switching does not key or remount workflo
   assert.match(localeSource, /Intl\.DateTimeFormat\(language, options\)/)
   assert.match(localeSource, /value\.startsWith\(prefix\)/)
   assert.ok(!appSource.includes('<Localized key='), 'Locale changes must keep the active workflow subtree mounted')
+  for (const file of ['Worker.tsx', 'Assessor.tsx', 'Customer.tsx', 'Admin.tsx']) {
+    assert.match(fs.readFileSync(path.join(root, 'src', file), 'utf8'), /<Localized>/, `${file} must localize its own custom-component render boundary`)
+  }
+})
+
+test('English/Hindi switching updates representative page text and stored preference survives a reload', async () => {
+  const preference = new Map()
+  globalThis.localStorage = {
+    getItem: key => preference.get(key) ?? null,
+    setItem: (key, value) => preference.set(key, String(value)),
+  }
+  const vite = await createServer({
+    configFile: false,
+    root,
+    logLevel: 'silent',
+    optimizeDeps: { noDiscovery: true, include: [] },
+    server: { middlewareMode: true },
+    appType: 'custom',
+  })
+  try {
+    const i18n = await vite.ssrLoadModule('/src/i18n.tsx')
+    assert.equal(i18n.readLocalePreference(), 'en')
+    const renderWorkerHeading = () => renderToStaticMarkup(React.createElement(
+      i18n.LocaleProvider,
+      null,
+      React.createElement(i18n.Localized, null, React.createElement('h1', null, 'Worker profile')),
+    ))
+
+    const english = renderWorkerHeading()
+    assert.match(english, /Worker profile/)
+    i18n.persistLocalePreference('hi')
+    assert.equal(i18n.readLocalePreference(), 'hi')
+    const hindi = renderWorkerHeading()
+    assert.match(hindi, /कामगार प्रोफ़ाइल/)
+    assert.notEqual(hindi, english)
+
+    // A new render simulates a page refresh: the provider restores the persisted locale.
+    assert.match(renderWorkerHeading(), /कामगार प्रोफ़ाइल/)
+    i18n.persistLocalePreference('en')
+    assert.match(renderWorkerHeading(), /Worker profile/)
+    assert.equal(i18n.translated('Assessment queue', 'hi'), 'आकलन कतार')
+    assert.equal(i18n.translated('Assessment queue', 'en'), 'Assessment queue')
+    assert.equal(i18n.translated('IN PROGRESS', 'hi'), 'प्रगति पर')
+  } finally {
+    await vite.close()
+    delete globalThis.localStorage
+  }
 })
 
 process.stdout.write(`Chhattisgarhi draft coverage: ${draftKeys.size}/${englishKeys.size} labels translated; ${englishKeys.size - draftKeys.size} labels remain in English and are shown with a review notice.\n`)

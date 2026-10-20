@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, json, Worker } from './api'
 import { EmptyState, Feedback, LoadingState } from './ui'
+import { Localized } from './i18n'
 
 type Request = {
   id: string
@@ -117,7 +118,7 @@ export default function Customer({ section }: { section: 'market' | 'requests' }
 
   if (loading) return <LoadingState label={section === 'market' ? 'Loading workers…' : 'Loading service requests…'} />
 
-  if (section === 'market') return <>
+  if (section === 'market') return <Localized><>
     <div className="page-heading">
       <div>
         <p className="eyebrow">LOCAL SKILLS, REAL EXPERIENCE</p>
@@ -162,9 +163,9 @@ export default function Customer({ section }: { section: 'market' | 'requests' }
       </article>)}
       {!workers.length && !error && <EmptyState className="wide" icon="⌕" title="No workers found" description="Try a different skill or service area." />}
     </div>
-  </>
+  </></Localized>
 
-  return <>
+  return <Localized><>
     <div className="page-heading"><div><p className="eyebrow">YOUR ACTIVITY</p><h1>Service requests</h1><p className="subtle">Reviews describe service experience and are separate from skill verification.</p></div></div>
     {error && <Feedback>{error}</Feedback>}
     {notice && <Feedback tone="success">{notice}</Feedback>}
@@ -185,5 +186,5 @@ export default function Customer({ section }: { section: 'market' | 'requests' }
       </article>)}
       {!requests.length && !error && <EmptyState icon="↗" title="No service requests yet" description="Find a worker and send a request to begin." />}
     </div>
-  </>
+  </></Localized>
 }
