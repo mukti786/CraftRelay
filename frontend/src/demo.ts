@@ -10,20 +10,27 @@ type DemoEvidence = {
   uploaded_at: string
   content_type: string
   size: number
+  reviewed_by?: string | null
+  reviewed_at?: string | null
 }
+type DemoTaskReview = { result: 'SATISFACTORY' | 'NEEDS_MORE'; notes: string; reviewed_at: string }
+type DemoTaskAttempt = { id: string; task_id: string; description: string; submitted_at: string; evidence: DemoEvidence; review: DemoTaskReview | null }
+type DemoPracticalTask = { id: string; criterion_id: string; title: string; instructions: string; rubric: string; source_name: string; source_url: string; official: boolean }
 type DemoCase = {
   id: string
   worker_id: string
   status: string
   qualification_id: string
   evidence: DemoEvidence[]
+  task_attempts?: DemoTaskAttempt[]
+  practical_workflow_enabled?: boolean
   decisions: Record<string, { result: 'COMPETENT' | 'NOT_YET'; notes: string; assessor_name: string; updated_at: string; needs_reconfirmation: boolean }>
 }
 export type DemoRequestStatus = 'REQUESTED' | 'ACCEPTED' | 'DECLINED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED'
 type DemoWorkRequest = WorkRequest & {
   customer_id: string; customer_name: string; worker_id: string; title: string; service_type: string
   description: string; location: string; preferred_date: string; status: DemoRequestStatus
-  history: { status: DemoRequestStatus; at: string }[]; review: { rating: number; comment: string } | null
+  created_at: string; history: { status: DemoRequestStatus; at: string }[]; review: { rating: number; comment: string } | null
 }
 type DemoState = { version: 2; profile: Worker; skills: Worker['skills']; cases: DemoCase[]; requests: DemoWorkRequest[]; activeRole: User['role'] | null }
 
@@ -38,8 +45,15 @@ const demoQualification: Qualification = {
 }
 const criteria: Criterion[] = [
   { id: 'demo-criterion-layout', code: 'CR1', description: 'Prepare the work area and set out a level, consistent masonry line.', mandatory: true, requires_practical: false, evidence_count: 0 },
-  { id: 'demo-criterion-mortar', code: 'CR2', description: 'Select and apply mortar safely and consistently for the task.', mandatory: true, requires_practical: false, evidence_count: 0 },
+  { id: 'demo-criterion-mortar', code: 'CR2', description: 'Select and apply mortar safely and consistently for the task.', mandatory: true, requires_practical: true, evidence_count: 0 },
 ]
+const practicalTasks: DemoPracticalTask[] = [{
+  id: 'demo-task-mortar-application', criterion_id: criteria[1].id,
+  title: 'Prepare and apply a mortar joint',
+  instructions: 'Describe the steps used to prepare the work area, mix mortar, and apply a consistent joint. Attach a representative file for metadata review.',
+  rubric: 'The assessor checks preparation, safe handling, consistency, and the worker’s explanation against the criterion.',
+  source_name: 'CraftRelay illustrative task', source_url: '', official: false,
+}]
 const initialEvidence: DemoEvidence[] = [
   { id: 'demo-evidence-layout', criterion_id: criteria[0].id, description: 'Synthetic sample metadata: photo showing the prepared work area and first course.', original_name: 'sample-work-area.jpg', review_status: 'PENDING', reviewer_notes: '', uploaded_at: '2026-01-12T10:30:00.000Z', content_type: 'image/jpeg', size: 384000 },
   { id: 'demo-evidence-mortar', criterion_id: criteria[1].id, description: 'Synthetic sample metadata: short work note describing mortar preparation and use.', original_name: 'sample-mortar-notes.pdf', review_status: 'PENDING', reviewer_notes: '', uploaded_at: '2026-01-12T10:35:00.000Z', content_type: 'application/pdf', size: 92000 },
@@ -57,10 +71,15 @@ function initialState(): DemoState {
       { id: 'demo-skill-brickwork', name: 'Bricklaying', years_experience: 7 },
       { id: 'demo-skill-site', name: 'Site preparation', years_experience: 5 },
     ],
-    cases: [{ id: 'demo-case-asha-001', worker_id: workerUser.id, status: 'SUBMITTED', qualification_id: demoQualification.id,
-      evidence: structuredClone(initialEvidence), decisions: {} }],
+    cases: [{ id: 'demo-case-asha-001', worker_id: workerUser.id, status: 'IN_PROGRESS', qualification_id: demoQualification.id,
+      practical_workflow_enabled: true,
+      evidence: structuredClone(initialEvidence), task_attempts: [{ id: 'demo-attempt-seed-001', task_id: practicalTasks[0].id,
+        description: 'Synthetic sample: prepared a small mortar batch and applied a consistent joint to a short test section.',
+        submitted_at: '2026-01-12T10:40:00.000Z', evidence: { id: 'demo-task-evidence-seed-001', criterion_id: criteria[1].id,
+          description: 'Synthetic sample metadata: illustrative mortar test section.', original_name: 'sample-mortar-task.jpg',
+          review_status: 'PENDING', reviewer_notes: '', uploaded_at: '2026-01-12T10:40:00.000Z', content_type: 'image/jpeg', size: 256000 }, review: null }], decisions: {} }],
     requests: [{ id: 'request-sample-001', customer_id: customerUser.id, customer_name: customerUser.full_name,
-      worker_id: workerUser.id, title: 'Repair a courtyard boundary wall', service_type: 'Masonry',
+      worker_id: workerUser.id, title: 'Repair a courtyard boundary wall', service_type: 'Masonry', created_at: new Date().toISOString(),
       description: 'Repair loose bricks and restore a short section of the courtyard wall.', location: 'Raipur, Chhattisgarh',
       preferred_date: '', status: 'REQUESTED', history: [{ status: 'REQUESTED', at: new Date().toISOString() }], review: null }],
     activeRole: null,
@@ -68,6 +87,11 @@ function initialState(): DemoState {
 }
 
 const requestStatuses: DemoRequestStatus[] = ['REQUESTED', 'ACCEPTED', 'DECLINED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED']
+function validIsoDate(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const date = new Date(`${value}T00:00:00.000Z`)
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value
+}
 function normalizeRequest(value: unknown): DemoWorkRequest | null {
   if (!value || typeof value !== 'object') return null
   const item = value as Partial<DemoWorkRequest>
@@ -79,11 +103,13 @@ function normalizeRequest(value: unknown): DemoWorkRequest | null {
     .map(entry => ({ status: entry.status as DemoRequestStatus, at: entry.at })) : []
   const review = item.review && Number.isInteger(item.review.rating) && item.review.rating >= 1 && item.review.rating <= 5
     && typeof item.review.comment === 'string' ? item.review : null
+  const createdAt = typeof item.created_at === 'string' && Number.isFinite(Date.parse(item.created_at))
+    ? item.created_at : history[0]?.at ?? new Date().toISOString()
   return { id: item.id, customer_id: item.customer_id, customer_name: item.customer_name, worker_id: item.worker_id,
     title: typeof item.title === 'string' ? item.title : item.description,
     service_type: typeof item.service_type === 'string' ? item.service_type : '', description: item.description,
     location: item.location, preferred_date: typeof item.preferred_date === 'string' ? item.preferred_date : '',
-    status: item.status as DemoRequestStatus, history, review }
+    status: item.status as DemoRequestStatus, created_at: createdAt, history, review }
 }
 
 let memoryState: DemoState | null = null
@@ -133,10 +159,17 @@ function bodyOf(options: RequestInit): Record<string, unknown> {
   try { return JSON.parse(options.body) as Record<string, unknown> } catch { return {} }
 }
 function qualification() { return { ...demoQualification, criteria: structuredClone(criteria) } }
+function taskRecords(item: DemoCase) {
+  return (item.practical_workflow_enabled && item.qualification_id === demoQualification.id ? practicalTasks : []).map(task => ({
+    ...task, attempts: (item.task_attempts ?? []).filter(attempt => attempt.task_id === task.id).map(attempt => ({
+      ...attempt, evidence: { ...attempt.evidence }, review: attempt.review ? { ...attempt.review } : null,
+    })),
+  }))
+}
 function workerCase(item: DemoCase) {
   return { ...item, qualification: demoQualification, criteria: structuredClone(criteria).map(criterion => ({
     ...criterion, evidence_count: item.evidence.filter(evidence => evidence.criterion_id === criterion.id).length,
-  })), evidence: item.evidence, practical_tasks: [] }
+  })), evidence: item.evidence, practical_tasks: taskRecords(item) }
 }
 function assessorCase(item: DemoCase) {
   const current = structuredClone(criteria)
@@ -152,7 +185,7 @@ function assessorCase(item: DemoCase) {
     criteria: current.map(criterion => ({ ...criterion,
       evidence: pendingEvidence.filter(evidence => evidence.criterion_id === criterion.id),
       decision: item.decisions[criterion.id] ?? null,
-    })), practical_tasks: [],
+    })), practical_tasks: taskRecords(item),
   }
 }
 function parseCaseId(path: string) { return path.match(/\/cases\/([^/]+)/)?.[1] }
@@ -182,15 +215,32 @@ export async function demoUpload<T>(path: string, form: FormData, onProgress: (p
   if (item.status !== 'IN_PROGRESS' && item.status !== 'NEEDS_MORE') throw new ApiError('Evidence metadata is locked after submission.', 409)
   const file = form.get('file')
   const description = String(form.get('description') ?? '').trim()
-  const criterionId = String(form.get('criterion_id') ?? '')
+  const taskMatch = path.match(/\/tasks\/([^/]+)\/attempts$/)
+  const taskContext = taskMatch ? practicalTasks.find(task => task.id === taskMatch[1]) : undefined
+  const criterionId = String(form.get('criterion_id') ?? taskContext?.criterion_id ?? '')
   if (!(file instanceof File)) throw new ApiError('Choose a file for the local metadata preview.', 400)
   const allowed = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp'])
   if (!allowed.has(file.type)) throw new ApiError('Choose a PDF, JPEG, PNG, or WebP file.', 422)
-  if (file.size > 20 * 1024 * 1024) throw new ApiError('Files must be 20 MB or smaller.', 422)
+  if (!file.size || file.size > 20 * 1024 * 1024) throw new ApiError('Choose a non-empty file no larger than 20 MB.', 422)
   if (description.length < 5) throw new ApiError('Describe the evidence in at least five characters.', 422)
   if (!criteria.some(criterion => criterion.id === criterionId)) throw new ApiError('Choose a criterion from this qualification.', 422)
+  if (taskMatch) {
+    const task = practicalTasks.find(candidate => candidate.id === taskMatch[1] && candidate.criterion_id === criterionId)
+    if (!task || item.qualification_id !== demoQualification.id) throw new ApiError('Approved practical task was not found.', 404)
+    const attempts = (item.task_attempts ?? []).filter(attempt => attempt.task_id === task.id)
+    const latest = attempts.at(-1)
+    if (latest && (!latest.review || latest.review.result !== 'NEEDS_MORE')) throw new ApiError('A new attempt is available only after remediation is requested.', 409)
+    item.task_attempts ??= []
+    item.task_attempts.push({ id: `demo-attempt-${crypto.randomUUID()}`, task_id: task.id, description,
+      submitted_at: new Date().toISOString(), evidence: { id: `demo-task-evidence-${crypto.randomUUID()}`, criterion_id: criterionId,
+        description: `${description} (file details only; file not stored)`, original_name: file.name.replace(/[\r\n]/g, '').slice(0, 180),
+        review_status: 'PENDING', reviewer_notes: '', uploaded_at: new Date().toISOString(), content_type: file.type, size: file.size }, review: null })
+    writeState(state)
+    onProgress(100)
+    return undefined as T
+  }
   item.evidence.push({ id: `demo-evidence-${crypto.randomUUID()}`, criterion_id: criterionId,
-    description: `${description} (file details only; file not stored)`, original_name: file.name.slice(0, 180),
+    description: `${description} (file details only; file not stored)`, original_name: file.name.replace(/[\r\n]/g, '').slice(0, 180),
     review_status: 'PENDING', reviewer_notes: '', uploaded_at: new Date().toISOString(), content_type: file.type,
     size: file.size })
   writeState(state)
@@ -246,13 +296,13 @@ export async function demoApi<T>(path: string, options: RequestInit = {}): Promi
     if (serviceType.length < 2 || serviceType.length > 80) throw new ApiError('Enter a service type between 2 and 80 characters.', 422)
     if (description.length < 5 || description.length > 2000) throw new ApiError('Describe the work in 5 to 2,000 characters.', 422)
     if (location.length < 2 || location.length > 200) throw new ApiError('Enter a job location between 2 and 200 characters.', 422)
-    if (preferredDate && !/^\d{4}-\d{2}-\d{2}$/.test(preferredDate)) throw new ApiError('Enter a valid preferred date.', 422)
+    if (preferredDate && !validIsoDate(preferredDate)) throw new ApiError('Enter a valid preferred date.', 422)
     if (active.requests.some(item => item.customer_id === user.id && item.worker_id === data.worker_id
       && item.title === title && item.description === description && item.location === location
       && ['REQUESTED', 'ACCEPTED', 'IN_PROGRESS'].includes(item.status))) throw new ApiError('A matching work request is already open.', 409)
     const request: DemoWorkRequest = { id: `request-${crypto.randomUUID()}`, customer_id: user.id,
       customer_name: user.full_name, worker_id: active.profile.id, title, service_type: serviceType, description,
-      location, preferred_date: preferredDate, status: 'REQUESTED', history: [{ status: 'REQUESTED', at: new Date().toISOString() }], review: null }
+      location, preferred_date: preferredDate, created_at: new Date().toISOString(), status: 'REQUESTED', history: [{ status: 'REQUESTED', at: new Date().toISOString() }], review: null }
     active.requests.unshift(request)
     writeState(active)
     return { ...request, worker_name: active.profile.full_name, worker_trade: active.profile.trade,
@@ -301,24 +351,35 @@ export async function demoApi<T>(path: string, options: RequestInit = {}): Promi
   }
   if (path === '/worker/profile' && method === 'PUT') {
     const { state: active } = requireRole('worker')
+    const trade = String(data.trade ?? active.profile.trade).trim()
+    const serviceArea = String(data.service_area ?? active.profile.service_area).trim()
+    const bio = String(data.bio ?? active.profile.bio).trim()
+    const experience = Number(data.experience_years ?? active.profile.experience_years)
+    if (trade.length < 2 || trade.length > 100) throw new ApiError('Enter a trade between 2 and 100 characters.', 422)
+    if (serviceArea.length < 2 || serviceArea.length > 160) throw new ApiError('Enter a service area between 2 and 160 characters.', 422)
+    if (!Number.isInteger(experience) || experience < 0 || experience > 60) throw new ApiError('Years of experience must be a whole number from 0 to 60.', 422)
+    if (bio.length > 2000 || typeof data.available !== 'boolean') throw new ApiError('Check profile details and availability before saving.', 422)
     active.profile = { ...active.profile,
-      trade: String(data.trade ?? active.profile.trade), experience_years: Number(data.experience_years ?? active.profile.experience_years),
-      service_area: String(data.service_area ?? active.profile.service_area), bio: String(data.bio ?? active.profile.bio),
-      available: Boolean(data.available), skills: active.skills }
+      trade, experience_years: experience, service_area: serviceArea, bio,
+      available: data.available, skills: active.skills }
     writeState(active)
     return active.profile as T
   }
   if (path === '/worker/skills' && method === 'POST') {
     const { state: active } = requireRole('worker')
     const name = String(data.name ?? '').trim()
-    if (name.length < 2) throw new ApiError('Skill name must have at least two characters.', 422)
-    active.skills.push({ id: `demo-skill-${crypto.randomUUID()}`, name, years_experience: Number(data.years_experience ?? 0) })
+    const years = Number(data.years_experience ?? 0)
+    if (name.length < 2 || name.length > 100) throw new ApiError('Skill name must have 2 to 100 characters.', 422)
+    if (!Number.isInteger(years) || years < 0 || years > 60) throw new ApiError('Skill experience must be a whole number from 0 to 60.', 422)
+    if (active.skills.some(skill => skill.name.toLocaleLowerCase() === name.toLocaleLowerCase())) throw new ApiError('This skill is already in your profile.', 409)
+    active.skills.push({ id: `demo-skill-${crypto.randomUUID()}`, name, years_experience: years })
     writeState(active)
     return active.skills.at(-1) as T
   }
   const deleteSkill = path.match(/^\/worker\/skills\/([^/]+)$/)
   if (deleteSkill && method === 'DELETE') {
     const { state: active } = requireRole('worker')
+    if (!active.skills.some(skill => skill.id === deleteSkill[1])) throw new ApiError('Skill not found.', 404)
     active.skills = active.skills.filter(skill => skill.id !== deleteSkill[1])
     active.profile.skills = active.skills
     writeState(active)
@@ -333,7 +394,10 @@ export async function demoApi<T>(path: string, options: RequestInit = {}): Promi
   if (path === '/worker/cases' && method === 'POST') {
     const { state: active, user } = requireRole('worker')
     if (data.qualification_id !== demoQualification.id) throw new ApiError('This qualification is not available in the catalogue.', 422)
-    const item: DemoCase = { id: `demo-case-${crypto.randomUUID()}`, worker_id: user.id, status: 'IN_PROGRESS', qualification_id: demoQualification.id, evidence: [], decisions: {} }
+    const existing = active.cases.find(item => item.worker_id === user.id && item.qualification_id === demoQualification.id)
+    if (existing) return { id: existing.id, status: existing.status } as T
+    const item: DemoCase = { id: `demo-case-${crypto.randomUUID()}`, worker_id: user.id, status: 'IN_PROGRESS', qualification_id: demoQualification.id,
+      practical_workflow_enabled: true, evidence: [], task_attempts: [], decisions: {} }
     active.cases.push(item)
     writeState(active)
     return workerCase(item) as T
@@ -345,6 +409,15 @@ export async function demoApi<T>(path: string, options: RequestInit = {}): Promi
     if (item.status !== 'IN_PROGRESS' && item.status !== 'NEEDS_MORE') throw new ApiError('This case cannot be submitted in its current state.', 409)
     const missing = criteria.filter(criterion => criterion.mandatory && !item.evidence.some(evidence => evidence.criterion_id === criterion.id))
     if (missing.length) throw new ApiError('Add evidence metadata for each required criterion before submitting.', 422)
+    const requiredTasks = item.practical_workflow_enabled
+      ? practicalTasks.filter(task => criteria.some(criterion => criterion.id === task.criterion_id && criterion.mandatory)) : []
+    const missingTask = requiredTasks.find(task => !(item.task_attempts ?? []).some(attempt => attempt.task_id === task.id))
+    if (missingTask) throw new ApiError(`Submit a practical task attempt for ${missingTask.title} before submitting this case.`, 422)
+    const awaitingTaskReview = requiredTasks.find(task => {
+      const latest = (item.task_attempts ?? []).filter(attempt => attempt.task_id === task.id).at(-1)
+      return !latest || (latest.review && latest.review.result === 'NEEDS_MORE')
+    })
+    if (awaitingTaskReview) throw new ApiError(`Submit a new attempt for ${awaitingTaskReview.title} after remediation or review the latest attempt.`, 409)
     item.status = 'SUBMITTED'
     for (const decision of Object.values(item.decisions)) decision.needs_reconfirmation = true
     writeState(active)
@@ -353,6 +426,23 @@ export async function demoApi<T>(path: string, options: RequestInit = {}): Promi
   if (path === '/assessor/cases' && method === 'GET') {
     const { state: active } = requireRole('assessor')
     return active.cases.filter(item => item.status === 'SUBMITTED').map(assessorCase) as T
+  }
+  const taskReviewMatch = path.match(/^\/assessor\/task-attempts\/([^/?]+)\/review$/)
+  if (taskReviewMatch && method === 'PUT') {
+    const { state: active } = requireRole('assessor')
+    const item = active.cases.find(candidate =>
+      (candidate.task_attempts ?? []).some(attempt => attempt.id === taskReviewMatch[1]))
+    const attempt = item?.task_attempts?.find(candidate => candidate.id === taskReviewMatch[1])
+    if (!item || !attempt) throw new ApiError('Practical task attempt not found.', 404)
+    if (attempt.review) throw new ApiError('This practical task attempt has already been reviewed.', 409)
+    if (item.status !== 'SUBMITTED') throw new ApiError('This assessment is not open for review.', 409)
+    if (data.result !== 'SATISFACTORY' && data.result !== 'NEEDS_MORE') throw new ApiError('Choose a supported practical-task result.', 422)
+    const notes = String(data.notes ?? '').trim()
+    if (notes.length < 3 || notes.length > 2000) throw new ApiError('Add a clear assessor note between 3 and 2,000 characters.', 422)
+    attempt.review = { result: data.result, notes, reviewed_at: new Date().toISOString() }
+    if (data.result === 'NEEDS_MORE') item.status = 'NEEDS_MORE'
+    writeState(active)
+    return attempt.review as T
   }
   if (path === '/assessor/ai-assistance' && method === 'GET') {
     requireRole('assessor')
@@ -398,6 +488,10 @@ export async function demoApi<T>(path: string, options: RequestInit = {}): Promi
     if (item.status !== 'SUBMITTED') throw new ApiError('This case is not open for verification.', 409)
     const complete = criteria.filter(c => c.mandatory).every(c => item.decisions[c.id]?.result === 'COMPETENT' && !item.decisions[c.id]?.needs_reconfirmation)
     if (!complete) throw new ApiError('All required criteria need a current competent assessor decision.', 409)
+    for (const task of (item.practical_workflow_enabled ? practicalTasks : []).filter(candidate => criteria.some(criterion => criterion.id === candidate.criterion_id && criterion.mandatory))) {
+      const latest = (item.task_attempts ?? []).filter(attempt => attempt.task_id === task.id).at(-1)
+      if (!latest?.review || latest.review.result !== 'SATISFACTORY') throw new ApiError(`An authorized assessor must record a satisfactory review for ${task.title}.`, 409)
+    }
     item.status = 'VERIFIED'
     writeState(active)
     return { status: item.status } as T

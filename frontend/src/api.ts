@@ -64,7 +64,7 @@ export type User = { id: string; email: string; full_name: string; role: 'worker
 export type WorkRequest = {
   id: string; customer_id?: string; customer_name?: string; worker_id?: string; worker_name?: string
   worker_trade?: string; worker_service_area?: string; title?: string; service_type?: string
-  description: string; location: string; preferred_date?: string; status: string
+  description: string; location: string; preferred_date?: string; created_at?: string; status: string
   history?: { status: string; at: string }[]; review?: { rating: number; comment: string } | null
 }
 export type Qualification = { id: string; code: string; version: string; title: string; source_name: string; source_url: string; official: boolean; criterion_count?: number }

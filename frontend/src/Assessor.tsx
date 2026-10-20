@@ -318,6 +318,7 @@ function PracticalTaskReview({ task, disabled, onReview }: {
   disabled: boolean
   onReview: (attemptId: string, result: 'SATISFACTORY' | 'NEEDS_MORE', notes: string) => Promise<void>
 }) {
+  const { locale } = useLocale()
   const [notes, setNotes] = useState('')
   const [result, setResult] = useState<'SATISFACTORY' | 'NEEDS_MORE'>('SATISFACTORY')
   const [saving, setSaving] = useState(false)
@@ -372,9 +373,10 @@ function PracticalTaskReview({ task, disabled, onReview }: {
     <small>Source: {task.source_name}{task.source_url.startsWith('https://') && <> · <a href={task.source_url} target="_blank" rel="noreferrer">View source ↗</a></>}</small>
     {task.attempts.map((attempt, index) => <article className="task-attempt-record" key={attempt.id}>
       <div className="request-top"><b>Attempt {index + 1}</b><span className="status-tag">{attempt.review?.result === 'SATISFACTORY' ? 'Satisfactory' : attempt.review?.result === 'NEEDS_MORE' ? 'Remediation requested' : 'Awaiting review'}</span></div>
+      <small>Submitted: {formatDate(attempt.submitted_at, locale, true)}</small>
       <p>{attempt.description}</p>
       {attempt.evidence && <div className="evidence-file"><span aria-hidden="true">▧</span><div><b>{attempt.evidence.original_name}</b><small>{attempt.evidence.description}</small></div>{DEMO_MODE ? <small>File details only; the original file is not stored here.</small> : <button type="button" className="text-button" disabled={downloading === attempt.evidence.id} onClick={() => void download(attempt.evidence!.id, attempt.evidence!.original_name)}>{downloading === attempt.evidence.id ? 'Loading…' : 'Open private task evidence'}</button>}</div>}
-      {attempt.review && <p className="review-note">Assessor feedback: {attempt.review.notes}</p>}
+      {attempt.review && <p className="review-note">Assessor feedback: {attempt.review.notes} · {formatDate(attempt.review.reviewed_at, locale, true)}</p>}
     </article>)}
     {pending && <div className="task-review-form">
       <label>Practical task outcome<select value={result} disabled={disabled || saving} onChange={event => setResult(event.target.value as 'SATISFACTORY' | 'NEEDS_MORE')}><option value="SATISFACTORY">Satisfactory against rubric</option><option value="NEEDS_MORE">Request remediation</option></select></label>

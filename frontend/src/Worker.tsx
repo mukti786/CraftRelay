@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from 'react'
 import { api, json, upload, Criterion, Qualification, Worker as WorkerProfile, WorkRequest, DEMO_MODE } from './api'
 import { EmptyState, Feedback, LoadingState } from './ui'
-import { Localized } from './i18n'
+import { formatDate, Localized, useLocale } from './i18n'
 
 type EvidenceRow = {
   id: string
@@ -42,6 +42,7 @@ type Case = {
 
 type QualificationDetails = Qualification & { criteria: Criterion[] }
 export default function Worker({ section }: { section: 'profile' | 'assessment' | 'requests' }) {
+  const { locale } = useLocale()
   const [profile, setProfile] = useState<WorkerProfile | null>(null)
   const [quals, setQuals] = useState<Qualification[]>([])
   const [selectedQualification, setSelectedQualification] = useState<QualificationDetails | null>(null)
@@ -220,7 +221,8 @@ export default function Worker({ section }: { section: 'profile' | 'assessment' 
       <div className="request-top"><span className="eyebrow">REQUEST FROM {(request.customer_name ?? 'Customer').toUpperCase()}</span><span className="status-tag">{request.status.replace('_', ' ')}</span></div>
       <h3>{request.title || request.description}</h3><p className="subtle">{request.service_type ? `${request.service_type} · ` : ''}⌖ {request.location}</p><p>{request.description}</p>
       {request.preferred_date && <p className="subtle">Preferred date: {request.preferred_date}</p>}
-      {request.history && <ol className="request-history" aria-label="Request status history">{request.history.map((entry, index) => <li key={`${entry.status}-${index}`}>{entry.status.replace('_', ' ')}</li>)}</ol>}
+      {request.created_at && <p className="subtle small">Requested: {formatDate(request.created_at, locale)}</p>}
+      {request.history && <ol className="request-history" aria-label="Request status history">{request.history.map((entry, index) => <li key={`${entry.status}-${index}`}>{entry.status.replace('_', ' ')} · {formatDate(entry.at, locale, true)}</li>)}</ol>}
       <div className="request-actions">
         {request.status === 'REQUESTED' && <><button className="button primary small-button" disabled={busy} onClick={() => void action(() => api(`/requests/${request.id}`, { method: 'PATCH', body: json({ status: 'ACCEPTED' }) }), 'Request accepted')}>Accept request</button>
           <button className="button secondary small-button" disabled={busy} onClick={() => void action(() => api(`/requests/${request.id}`, { method: 'PATCH', body: json({ status: 'DECLINED' }) }), 'Request declined')}>Decline</button></>}
@@ -321,6 +323,7 @@ function TaskAttemptForm({ task, caseId, disabled, onUploaded }: {
   disabled: boolean
   onUploaded: () => Promise<void>
 }) {
+  const { locale } = useLocale()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [progress, setProgress] = useState<number | null>(null)
@@ -359,9 +362,10 @@ function TaskAttemptForm({ task, caseId, disabled, onUploaded }: {
     <small>Source: {task.source_name}{task.source_url.startsWith('https://') && <> · <a href={task.source_url} target="_blank" rel="noreferrer">View source ↗</a></>}</small>
     {task.attempts.map((attempt, index) => <div className="task-attempt-record" key={attempt.id}>
       <b>Attempt {index + 1}</b><span className="status-tag">{attempt.review?.result === 'SATISFACTORY' ? 'Assessor reviewed' : attempt.review?.result === 'NEEDS_MORE' ? 'More evidence requested' : 'Awaiting assessor review'}</span>
+      <small>Submitted: {formatDate(attempt.submitted_at, locale, true)}</small>
       <p>{attempt.description}</p>
       {attempt.evidence && <small>{attempt.evidence.original_name}</small>}
-      {attempt.review && <p className="review-note">Assessor feedback: {attempt.review.notes}</p>}
+      {attempt.review && <p className="review-note">Assessor feedback: {attempt.review.notes} · {formatDate(attempt.review.reviewed_at, locale, true)}</p>}
     </div>)}
     {!disabled && canAttempt && <form className="evidence-form" onSubmit={event => void submit(event)}>
       <label htmlFor={`task-description-${task.id}`}>Describe what you did</label>
@@ -370,9 +374,9 @@ function TaskAttemptForm({ task, caseId, disabled, onUploaded }: {
       <label htmlFor={`task-evidence-${task.id}`}>Choose private task evidence</label>
       <input id={`task-evidence-${task.id}`} name="file" type="file" required accept=".pdf,image/jpeg,image/png,image/webp" />
       <button className="button secondary small-button" disabled={busy}>{busy ? 'Submitting…' : latest ? 'Submit remediation attempt' : 'Submit task attempt'}</button>
-      {progress !== null && <div className="upload-progress" role="status" aria-live="polite"><progress max="100" value={progress} aria-label="Task evidence upload progress"/><span>{progress < 100 ? `Uploading ${progress}%` : 'Upload sent · validating securely…'}</span></div>}
+      {progress !== null && <div className="upload-progress" role="status" aria-live="polite"><progress max="100" value={progress} aria-label="Task evidence upload progress"/><span>{DEMO_MODE ? 'Evidence details saved in this browser · file not stored' : progress < 100 ? `Uploading ${progress}%` : 'Upload sent · validating securely…'}</span></div>}
       {error && <span className="form-error" role="alert">{error}</span>}
-      <small>PDF, JPEG, PNG, or WebP · max 20 MB · stored privately. Evidence is reviewed by an authorized assessor.</small>
+      <small>{DEMO_MODE ? 'PDF, JPEG, PNG, or WebP · max 20 MB. The file name, type, size, and note are saved in this browser; the file itself is not stored.' : 'PDF, JPEG, PNG, or WebP · max 20 MB · stored privately. Evidence is reviewed by an authorized assessor.'}</small>
     </form>}
     {!disabled && latest && !canAttempt && <p className="subtle">This task has an assessor-reviewed attempt. A new attempt is available only if the assessor requests remediation.</p>}
   </section></Localized>

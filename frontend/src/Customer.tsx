@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, json, Worker, WorkRequest } from './api'
 import { EmptyState, Feedback, LoadingState } from './ui'
-import { Localized } from './i18n'
+import { formatDate, Localized, useLocale } from './i18n'
 
 const statusLabels: Record<string, string> = {
   REQUESTED: 'Awaiting worker response',
@@ -13,6 +13,7 @@ const statusLabels: Record<string, string> = {
 }
 
 export default function Customer({ section }: { section: 'market' | 'requests' }) {
+  const { locale } = useLocale()
   const [workers, setWorkers] = useState<Worker[]>([])
   const [requests, setRequests] = useState<WorkRequest[]>([])
   const [query, setQuery] = useState('')
@@ -185,8 +186,9 @@ export default function Customer({ section }: { section: 'market' | 'requests' }
         <p className="subtle">{request.service_type || request.worker_trade || 'Skilled worker'} · {request.worker_trade || 'Skilled worker'}</p>
         <p>{request.description}</p>
         <p className="subtle">⌖ {request.location}</p>
+        {request.created_at && <p className="subtle small">Requested: {formatDate(request.created_at, locale)}</p>}
         {request.preferred_date && <p className="subtle">Preferred date: {request.preferred_date}</p>}
-        {request.history && request.history.length > 0 && <ol className="request-history" aria-label="Request status history">{request.history.map((entry, index) => <li key={`${entry.status}-${index}`}>{statusLabels[entry.status] || entry.status.replace('_', ' ')}</li>)}</ol>}
+        {request.history && request.history.length > 0 && <ol className="request-history" aria-label="Request status history">{request.history.map((entry, index) => <li key={`${entry.status}-${index}`}>{statusLabels[entry.status] || entry.status.replace('_', ' ')} · {formatDate(entry.at, locale, true)}</li>)}</ol>}
         {(request.status === 'REQUESTED' || request.status === 'ACCEPTED') && <button className="text-button danger-text" disabled={busyId === request.id} onClick={() => void change(request, 'CANCELLED')}>Cancel request</button>}
         {request.status === 'COMPLETED' && !request.review && <form className="review-form" onSubmit={event => { event.preventDefault(); void review(request, event.currentTarget) }}>
           <label>Service rating<select name="rating" defaultValue="5"><option value="5">5 — Great</option><option value="4">4 — Good</option><option value="3">3 — Okay</option><option value="2">2 — Poor</option><option value="1">1 — Bad</option></select></label>

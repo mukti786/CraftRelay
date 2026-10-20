@@ -262,6 +262,21 @@ const english = {
   'CraftRelay workflow at a glance': 'CraftRelay workflow at a glance',
   'Landing page navigation': 'Landing page navigation',
   'Formal competency decisions stay with authorized human assessors.': 'Formal competency decisions stay with authorized human assessors.',
+  'Requested:': 'Requested:',
+  'Submitted:': 'Submitted:',
+  'Enter a trade between 2 and 100 characters.': 'Enter a trade between 2 and 100 characters.',
+  'Enter a service area between 2 and 160 characters.': 'Enter a service area between 2 and 160 characters.',
+  'Years of experience must be a whole number from 0 to 60.': 'Years of experience must be a whole number from 0 to 60.',
+  'Check profile details and availability before saving.': 'Check profile details and availability before saving.',
+  'Skill name must have 2 to 100 characters.': 'Skill name must have 2 to 100 characters.',
+  'Skill experience must be a whole number from 0 to 60.': 'Skill experience must be a whole number from 0 to 60.',
+  'This skill is already in your profile.': 'This skill is already in your profile.',
+  'Skill not found.': 'Skill not found.',
+  'Choose a non-empty file no larger than 20 MB.': 'Choose a non-empty file no larger than 20 MB.',
+  'Approved practical task was not found.': 'Approved practical task was not found.',
+  'Add a clear assessor note between 3 and 2,000 characters.': 'Add a clear assessor note between 3 and 2,000 characters.',
+  'This practical task attempt has already been reviewed.': 'This practical task attempt has already been reviewed.',
+  'An authorized assessor must record a satisfactory review for': 'An authorized assessor must record a satisfactory review for',
 } as const
 
 const hindi: Record<keyof typeof english, string> = {
@@ -485,6 +500,21 @@ const hindi: Record<keyof typeof english, string> = {
   'CraftRelay workflow at a glance': 'CraftRelay कार्यप्रवाह एक नज़र में',
   'Landing page navigation': 'मुखपृष्ठ नेविगेशन',
   'Formal competency decisions stay with authorized human assessors.': 'औपचारिक दक्षता निर्णय अधिकृत मानव मूल्यांकनकर्ता ही लेते हैं।',
+  'Requested:': 'अनुरोध की तारीख:',
+  'Submitted:': 'जमा करने की तारीख:',
+  'Enter a trade between 2 and 100 characters.': 'काम का प्रकार 2 से 100 अक्षरों में लिखें।',
+  'Enter a service area between 2 and 160 characters.': 'सेवा क्षेत्र 2 से 160 अक्षरों में लिखें।',
+  'Years of experience must be a whole number from 0 to 60.': 'अनुभव के वर्ष 0 से 60 के बीच पूरी संख्या होनी चाहिए।',
+  'Check profile details and availability before saving.': 'सहेजने से पहले प्रोफ़ाइल विवरण और उपलब्धता जाँचें।',
+  'Skill name must have 2 to 100 characters.': 'कौशल का नाम 2 से 100 अक्षरों का होना चाहिए।',
+  'Skill experience must be a whole number from 0 to 60.': 'कौशल अनुभव 0 से 60 के बीच पूरी संख्या होना चाहिए।',
+  'This skill is already in your profile.': 'यह कौशल आपकी प्रोफ़ाइल में पहले से है।',
+  'Skill not found.': 'कौशल नहीं मिला।',
+  'Choose a non-empty file no larger than 20 MB.': '20 MB से छोटी कोई खाली न होने वाली फ़ाइल चुनें।',
+  'Approved practical task was not found.': 'स्वीकृत व्यावहारिक कार्य नहीं मिला।',
+  'Add a clear assessor note between 3 and 2,000 characters.': 'मूल्यांकनकर्ता की टिप्पणी 3 से 2,000 अक्षरों में स्पष्ट लिखें।',
+  'This practical task attempt has already been reviewed.': 'इस व्यावहारिक प्रयास की समीक्षा पहले ही हो चुकी है।',
+  'An authorized assessor must record a satisfactory review for': 'के लिए अधिकृत मूल्यांकनकर्ता की संतोषजनक समीक्षा ज़रूरी है:',
 }
 
 const draft: Partial<Record<keyof typeof english, string>> = {
