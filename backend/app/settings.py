@@ -8,6 +8,9 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
+DEMO_DATABASE_URL = "sqlite+aiosqlite:////var/data/craftrelay.db"
+DEMO_EVIDENCE_DIR = "/var/data/evidence"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -35,19 +38,17 @@ def get_settings() -> Settings:
 
 
 def validate_settings(cfg: Settings) -> Settings:
-    if cfg.app_env not in {"development", "test", "production"}:
-        raise RuntimeError("APP_ENV must be development, test, or production")
+    if cfg.app_env not in {"development", "test", "demo", "production"}:
+        raise RuntimeError("APP_ENV must be development, test, demo, or production")
     if not cfg.secret_key:
-        if cfg.app_env == "production":
-            raise RuntimeError("SECRET_KEY must be configured in production")
+        if cfg.app_env in {"demo", "production"}:
+            raise RuntimeError("SECRET_KEY must be configured in demo and production")
         cfg.secret_key = secrets.token_urlsafe(48)
-    if cfg.app_env == "production":
+    if cfg.app_env in {"demo", "production"}:
         if len(cfg.secret_key.encode("utf-8")) < 32 or len(set(cfg.secret_key)) < 16:
-            raise RuntimeError(
-                "SECRET_KEY must be a high-entropy value of at least 32 bytes in production"
-            )
+            raise RuntimeError("SECRET_KEY must be a high-entropy value of at least 32 bytes")
         if not cfg.cors_origin_list or "*" in cfg.cors_origin_list:
-            raise RuntimeError("Production CORS_ORIGINS must list explicit trusted origins")
+            raise RuntimeError("CORS_ORIGINS must list explicit trusted HTTPS origins")
         if any(
             urlsplit(origin).scheme != "https"
             or not urlsplit(origin).hostname
@@ -58,19 +59,40 @@ def validate_settings(cfg: Settings) -> Settings:
             or urlsplit(origin).password
             for origin in cfg.cors_origin_list
         ):
-            raise RuntimeError("Production CORS_ORIGINS must use HTTPS origins")
+            raise RuntimeError("CORS_ORIGINS must use HTTPS origins")
 
-        try:
-            database_url = make_url(cfg.database_url)
-        except Exception as exc:
-            raise RuntimeError("Production DATABASE_URL must be a valid PostgreSQL URL") from exc
-        if (
-            database_url.drivername != "postgresql+asyncpg"
-            or not database_url.host
-            or not database_url.database
-        ):
-            raise RuntimeError("Production DATABASE_URL must target PostgreSQL via asyncpg")
+        if cfg.app_env == "production":
+            try:
+                database_url = make_url(cfg.database_url)
+            except Exception as exc:
+                raise RuntimeError(
+                    "Production DATABASE_URL must be a valid PostgreSQL URL"
+                ) from exc
+            if (
+                database_url.drivername != "postgresql+asyncpg"
+                or not database_url.host
+                or not database_url.database
+            ):
+                raise RuntimeError("Production DATABASE_URL must target PostgreSQL via asyncpg")
 
-        if not Path(cfg.evidence_dir).is_absolute():
-            raise RuntimeError("Production EVIDENCE_DIR must be an absolute persistent mount path")
+            if not Path(cfg.evidence_dir).is_absolute():
+                raise RuntimeError(
+                    "Production EVIDENCE_DIR must be an absolute persistent mount path"
+                )
+        else:
+            try:
+                database_url = make_url(cfg.database_url)
+            except Exception as exc:
+                raise RuntimeError(
+                    "Demo DATABASE_URL must target the isolated SQLite demo file"
+                ) from exc
+            if (
+                database_url.render_as_string(hide_password=False) != DEMO_DATABASE_URL
+                or cfg.evidence_dir != DEMO_EVIDENCE_DIR
+                or cfg.cookie_samesite != "none"
+            ):
+                raise RuntimeError(
+                    "Demo mode requires SQLite at /var/data/craftrelay.db, evidence at "
+                    "/var/data/evidence, and COOKIE_SAMESITE=none"
+                )
     return cfg

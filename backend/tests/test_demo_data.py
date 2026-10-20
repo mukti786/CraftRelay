@@ -16,6 +16,7 @@ from app.demo_data import (
     DEMO_EMAILS,
     IDS,
     existing_database_state,
+    require_seedable_state,
     seed_demo_records,
     validate_options,
 )
@@ -35,6 +36,7 @@ from app.models import (
     User,
     WorkerProfile,
 )
+from app.settings import DEMO_DATABASE_URL
 
 
 def test_demo_options_require_explicit_local_synthetic_database(tmp_path):
@@ -59,7 +61,7 @@ def test_demo_options_require_explicit_local_synthetic_database(tmp_path):
             database_url=target,
             backend_root=backend_root,
         )
-    with pytest.raises(ValueError, match="APP_ENV=development"):
+    with pytest.raises(ValueError, match="APP_ENV=development or demo"):
         validate_options(
             app_env="production",
             confirmed=True,
@@ -89,6 +91,47 @@ def test_demo_options_require_explicit_local_synthetic_database(tmp_path):
                 database_url=unsafe_url,
                 backend_root=backend_root,
             )
+
+
+def test_hosted_demo_seed_requires_explicit_strong_password_and_exact_persistent_database(
+    tmp_path,
+):
+    backend_root = tmp_path / "backend"
+    backend_root.mkdir()
+    url, path = validate_options(
+        app_env="demo",
+        confirmed=True,
+        password="Synthetic-Demo-Test-2026!",
+        database_url=DEMO_DATABASE_URL,
+        backend_root=backend_root,
+    )
+    assert url == DEMO_DATABASE_URL
+    assert path.as_posix().endswith("/var/data/craftrelay.db")
+
+    with pytest.raises(ValueError, match="confirm-demo-data"):
+        validate_options(
+            app_env="demo",
+            confirmed=False,
+            password="Synthetic-Demo-Test-2026!",
+            database_url=DEMO_DATABASE_URL,
+            backend_root=backend_root,
+        )
+    with pytest.raises(ValueError, match="strong value"):
+        validate_options(
+            app_env="demo",
+            confirmed=True,
+            password="short",
+            database_url=DEMO_DATABASE_URL,
+            backend_root=backend_root,
+        )
+    with pytest.raises(ValueError, match="only /var/data/craftrelay.db"):
+        validate_options(
+            app_env="demo",
+            confirmed=True,
+            password="Synthetic-Demo-Test-2026!",
+            database_url="sqlite+aiosqlite:////tmp/craftrelay.db",
+            backend_root=backend_root,
+        )
 
 
 def test_demo_options_reject_symlinked_demo_directory(tmp_path, monkeypatch):
@@ -225,6 +268,10 @@ def test_synthetic_demo_seed_is_complete_and_rerun_never_resets(tmp_path):
     recognized_path = demo_root / "craftrelay-judge-demo.db"
     recognized_path.write_bytes(database_path.read_bytes())
     assert existing_database_state(recognized_path, "demo-test-head") == "complete"
+    with pytest.raises(ValueError, match="already seeded"):
+        require_seedable_state("complete", "demo")
+    with pytest.raises(ValueError, match="unrecognized or partial"):
+        require_seedable_state("unsafe", "demo")
 
 
 def test_partial_demo_seed_refuses_to_modify_existing_records(tmp_path):
@@ -288,7 +335,8 @@ def test_demo_cli_migrates_fresh_database_and_rerun_does_not_reset(tmp_path):
             check=False,
         )
         assert first.returncode == 0, first.stderr
-        assert "demo.worker@example.test" in first.stdout
+        assert "Synthetic demo accounts and catalogue created" in first.stdout
+        assert "demo.worker@example.com" not in first.stdout
         assert "Synthetic-Demo-Test-2026!" not in first.stdout
         connection = sqlite3.connect(database_path)
         try:

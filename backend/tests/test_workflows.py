@@ -36,7 +36,7 @@ from app.models import (
     User,
     WorkerProfile,
 )
-from app.settings import Settings, validate_settings
+from app.settings import DEMO_DATABASE_URL, Settings, validate_settings
 
 
 @pytest.fixture
@@ -1477,7 +1477,7 @@ def test_production_configuration_rejects_missing_weak_secrets_and_wildcard_cors
         validate_settings(
             Settings(app_env="production", secret_key="x" * 48, cors_origins="https://app.example")
         )
-    with pytest.raises(RuntimeError, match="explicit trusted origins"):
+    with pytest.raises(RuntimeError, match="explicit trusted HTTPS origins"):
         validate_settings(
             Settings(
                 app_env="production",
@@ -1537,6 +1537,62 @@ def test_production_configuration_rejects_missing_weak_secrets_and_wildcard_cors
         ).app_env
         == "production"
     )
+
+
+def test_demo_configuration_is_strictly_isolated_and_uses_secure_cookie_settings():
+    strong_secret = "aB3dE5gH7jK9mN2pQ4sT6vX8zA0cD1fG"
+    valid_demo = Settings(
+        app_env="demo",
+        secret_key=strong_secret,
+        cors_origins="https://craftrelay-demo.vercel.app",
+        database_url=DEMO_DATABASE_URL,
+        evidence_dir="/var/data/evidence",
+        cookie_samesite="none",
+    )
+    assert validate_settings(valid_demo).app_env == "demo"
+    assert main.cookie_options()["secure"] is False  # active test settings remain isolated
+    original_env = main.settings.app_env
+    try:
+        main.settings.app_env = "demo"
+        assert main.cookie_options()["secure"] is True
+    finally:
+        main.settings.app_env = original_env
+
+    with pytest.raises(RuntimeError, match="SECRET_KEY"):
+        validate_settings(Settings(app_env="demo", secret_key=""))
+    with pytest.raises(RuntimeError, match="SQLite at /var/data/craftrelay.db"):
+        validate_settings(
+            Settings(
+                app_env="demo",
+                secret_key=strong_secret,
+                cors_origins="https://craftrelay-demo.vercel.app",
+                database_url="sqlite+aiosqlite:///./craftrelay.db",
+                evidence_dir="/var/data/evidence",
+                cookie_samesite="none",
+            )
+        )
+    with pytest.raises(RuntimeError, match="HTTPS origins"):
+        validate_settings(
+            Settings(
+                app_env="demo",
+                secret_key=strong_secret,
+                cors_origins="http://craftrelay-demo.vercel.app",
+                database_url=DEMO_DATABASE_URL,
+                evidence_dir="/var/data/evidence",
+                cookie_samesite="none",
+            )
+        )
+    with pytest.raises(RuntimeError, match="COOKIE_SAMESITE=none"):
+        validate_settings(
+            Settings(
+                app_env="demo",
+                secret_key=strong_secret,
+                cors_origins="https://craftrelay-demo.vercel.app",
+                database_url=DEMO_DATABASE_URL,
+                evidence_dir="/var/data/evidence",
+                cookie_samesite="lax",
+            )
+        )
 
 
 def test_bootstrap_refuses_to_promote_an_existing_non_admin(client, monkeypatch):

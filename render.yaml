@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: craftrelay-demo-api
+    runtime: python
+    plan: starter
+    branch: main
+    rootDir: backend
+    buildCommand: uv sync --frozen
+    startCommand: uv run python -m app.serve
+    healthCheckPath: /api/health
+    numInstances: 1
+    disk:
+      name: craftrelay-demo-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: APP_ENV
+        value: demo
+      - key: DATABASE_URL
+        value: sqlite+aiosqlite:////var/data/craftrelay.db
+      - key: EVIDENCE_DIR
+        value: /var/data/evidence
+      - key: SECRET_KEY
+        generateValue: true
+      - key: CORS_ORIGINS
+        sync: false
+      - key: COOKIE_SAMESITE
+        value: none
+      - key: AI_ASSISTANCE_PROVIDER
+        value: none
+      - key: DEMO_PASSWORD
+        sync: false

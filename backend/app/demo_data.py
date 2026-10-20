@@ -1,4 +1,4 @@
-"""Opt-in synthetic seed for an isolated local judge-demo database.
+"""Opt-in synthetic seed for an isolated local or hosted judge-demo database.
 
 This command deliberately targets a dedicated SQLite file under backend/.tmp. It never resets
 an existing database and never inserts evidence, assessment outcomes, reviews, or competencies.
@@ -20,11 +20,13 @@ from sqlalchemy import func, select
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.settings import DEMO_DATABASE_URL
+
 DEMO_EMAILS = {
-    "admin": "demo.admin@example.test",
-    "assessor": "demo.assessor@example.test",
-    "worker": "demo.worker@example.test",
-    "customer": "demo.customer@example.test",
+    "admin": "demo.admin@example.com",
+    "assessor": "demo.assessor@example.com",
+    "worker": "demo.worker@example.com",
+    "customer": "demo.customer@example.com",
 }
 DEMO_SEED_VERSION = "judge-demo-v1"
 DEMO_QUALIFICATION_CODE = "DEMO-JUDGE-001"
@@ -54,6 +56,18 @@ IDS = {
 }
 
 
+def _is_strong_demo_password(password: str | None) -> bool:
+    if not password or len(password) < 16:
+        return False
+    groups = (
+        any(char.islower() for char in password),
+        any(char.isupper() for char in password),
+        any(char.isdigit() for char in password),
+        any(not char.isalnum() for char in password),
+    )
+    return all(groups)
+
+
 def validate_options(
     *,
     app_env: str,
@@ -65,9 +79,15 @@ def validate_options(
     """Validate all gates before creating directories, files, schemas, or users."""
     if not confirmed:
         raise ValueError("Pass --confirm-demo-data to explicitly opt in to synthetic demo seeding")
-    if app_env != "development":
-        raise ValueError("Demo seeding is allowed only when APP_ENV=development")
-    if not password or len(password) < 12:
+    if app_env not in {"development", "demo"}:
+        raise ValueError("Demo seeding is allowed only when APP_ENV=development or demo")
+    if app_env == "demo":
+        if not _is_strong_demo_password(password):
+            raise ValueError(
+                "Set DEMO_PASSWORD to a strong value of at least 16 characters containing "
+                "uppercase, lowercase, a number, and a symbol"
+            )
+    elif not password or len(password) < 12:
         raise ValueError("Set DEMO_PASSWORD to a local demo password of at least 12 characters")
 
     try:
@@ -86,6 +106,15 @@ def validate_options(
         raise ValueError("Demo seeding requires a file-backed sqlite+aiosqlite URL with no options")
 
     backend_root = backend_root.resolve()
+    supplied_path = Path(url.database)
+    candidate = supplied_path if supplied_path.is_absolute() else backend_root / supplied_path
+    if app_env == "demo":
+        if url.render_as_string(hide_password=False) != DEMO_DATABASE_URL:
+            raise ValueError("Hosted demo seeding may target only /var/data/craftrelay.db")
+        if candidate.is_symlink():
+            raise ValueError("Hosted demo database path must not be a symbolic link")
+        return DEMO_DATABASE_URL, candidate
+
     demo_root_candidate = backend_root / ".tmp"
     if demo_root_candidate.is_symlink():
         raise ValueError("The backend/.tmp demo directory must not be a symbolic link")
@@ -93,8 +122,6 @@ def validate_options(
     if demo_root.parent != backend_root:
         raise ValueError("The backend/.tmp demo directory must remain inside the backend directory")
 
-    supplied_path = Path(url.database)
-    candidate = supplied_path if supplied_path.is_absolute() else backend_root / supplied_path
     if candidate.is_symlink():
         raise ValueError("Demo database path must not be a symbolic link")
     target = candidate.resolve()
@@ -184,6 +211,13 @@ def existing_database_state(
             connection.close()
     except (OSError, sqlite3.Error, KeyError, ValueError):
         return "unsafe"
+
+
+def require_seedable_state(state: str, app_env: str) -> None:
+    if state == "unsafe":
+        raise ValueError("Demo target contains unrecognized or partial data; nothing was changed")
+    if state == "complete" and app_env == "demo":
+        raise ValueError("Hosted demo database is already seeded; nothing was changed")
 
 
 async def seed_demo_records(db: AsyncSession, password: str) -> bool:
@@ -400,9 +434,10 @@ def main(argv: list[str] | None = None) -> int:
     backend_root = Path(__file__).resolve().parents[1]
     os.chdir(backend_root)
 
-    from app.settings import Settings
+    from app.settings import Settings, validate_settings
 
     settings = Settings()
+    validate_settings(settings)
     password = os.environ.get("DEMO_PASSWORD")
     try:
         database_url, database_path = validate_options(
@@ -414,6 +449,8 @@ def main(argv: list[str] | None = None) -> int:
         )
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
+    if settings.app_env == "demo" and not Path("/var/data").is_mount():
+        raise SystemExit("Hosted demo seeding requires the persistent disk mounted at /var/data")
 
     from alembic import command
     from alembic.config import Config
@@ -422,14 +459,13 @@ def main(argv: list[str] | None = None) -> int:
     config = Config(str(backend_root / "alembic.ini"))
     head = ScriptDirectory.from_config(config).get_current_head()
     state = existing_database_state(database_path, head)
+    try:
+        require_seedable_state(state, settings.app_env)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     if state == "complete":
         print(f"Synthetic judge demo already exists at {database_path}; no records were changed.")
         return 0
-    if state == "unsafe":
-        raise SystemExit(
-            "Demo target contains unrecognized or partial data. Nothing was changed; choose a new "
-            "dedicated demo database filename under backend/.tmp."
-        )
 
     database_path.parent.mkdir(parents=True, exist_ok=True)
     os.environ["DATABASE_URL"] = database_url
@@ -450,9 +486,8 @@ def main(argv: list[str] | None = None) -> int:
     inserted = asyncio.run(seed())
     if inserted:
         print(
-            "Synthetic demo created. Sign-in emails: "
-            + ", ".join(DEMO_EMAILS.values())
-            + f". Password was read from DEMO_PASSWORD and was not printed. Database: {database_path}"
+            "Synthetic demo accounts and catalogue created; credentials were not printed. "
+            f"Database: {database_path}"
         )
     else:
         print(f"Synthetic judge demo already exists at {database_path}; no records were changed.")

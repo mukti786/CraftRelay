@@ -469,7 +469,7 @@ def cookie_options() -> dict:
     return {
         "path": "/",
         "httponly": True,
-        "secure": settings.app_env == "production" or settings.cookie_samesite == "none",
+        "secure": settings.app_env in {"demo", "production"} or settings.cookie_samesite == "none",
         "samesite": settings.cookie_samesite,
     }
 
