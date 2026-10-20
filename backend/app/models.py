@@ -1,7 +1,17 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -113,6 +123,7 @@ class AssessmentCase(Base):
 
 class Evidence(Base):
     __tablename__ = "evidence"
+    __table_args__ = (UniqueConstraint("task_attempt_id", name="uq_evidence_task_attempt"),)
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     case_id: Mapped[str] = mapped_column(
         ForeignKey("assessment_cases.id", ondelete="CASCADE"), index=True
@@ -121,6 +132,9 @@ class Evidence(Base):
         ForeignKey("worker_profiles.id", ondelete="CASCADE"), index=True
     )
     criterion_id: Mapped[str] = mapped_column(ForeignKey("criteria.id"), index=True)
+    task_attempt_id: Mapped[str | None] = mapped_column(
+        ForeignKey("practical_task_attempts.id", ondelete="RESTRICT"), index=True, nullable=True
+    )
     description: Mapped[str] = mapped_column(Text)
     original_name: Mapped[str] = mapped_column(String(255))
     stored_name: Mapped[str] = mapped_column(String(255), unique=True)
@@ -130,6 +144,46 @@ class Evidence(Base):
     review_status: Mapped[str] = mapped_column(String(40), default="PENDING")
     reviewer_notes: Mapped[str] = mapped_column(Text, default="")
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class PracticalTaskAttempt(Base):
+    __tablename__ = "practical_task_attempts"
+    __table_args__ = (
+        Index(
+            "uq_active_practical_task_attempt",
+            "case_id",
+            "task_id",
+            unique=True,
+            sqlite_where=text("active_attempt = 1"),
+            postgresql_where=text("active_attempt"),
+        ),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    case_id: Mapped[str] = mapped_column(
+        ForeignKey("assessment_cases.id", ondelete="CASCADE"), index=True
+    )
+    worker_id: Mapped[str] = mapped_column(
+        ForeignKey("worker_profiles.id", ondelete="CASCADE"), index=True
+    )
+    qualification_id: Mapped[str] = mapped_column(ForeignKey("qualifications.id"), index=True)
+    criterion_id: Mapped[str] = mapped_column(ForeignKey("criteria.id"), index=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey("approved_tasks.id"), index=True)
+    description: Mapped[str] = mapped_column(Text)
+    active_attempt: Mapped[bool] = mapped_column(Boolean, default=True)
+    submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class PracticalTaskAttemptReview(Base):
+    __tablename__ = "practical_task_attempt_reviews"
+    __table_args__ = (UniqueConstraint("attempt_id", name="uq_task_attempt_review"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    attempt_id: Mapped[str] = mapped_column(
+        ForeignKey("practical_task_attempts.id", ondelete="CASCADE"), index=True
+    )
+    assessor_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    result: Mapped[str] = mapped_column(String(40))
+    notes: Mapped[str] = mapped_column(Text)
+    reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
 class CriterionDecision(Base):

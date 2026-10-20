@@ -14,11 +14,15 @@ from app import bootstrap, main
 from app.db import get_db
 from app.main import app
 from app.models import (
+    ApprovedTask,
     AuditEvent,
     Competency,
     Criterion,
     CriterionDecision,
     DeclaredSkill,
+    Evidence,
+    PracticalTaskAttempt,
+    PracticalTaskAttemptReview,
     Qualification,
     User,
     WorkerProfile,
@@ -641,6 +645,358 @@ def test_worker_ownership_is_enforced_for_cases_and_private_evidence(client):
         == 404
     )
     assert second_worker.get(f"/api/evidence/{evidence_id}/file").status_code == 403
+
+
+def test_practical_task_attempts_private_review_remediation_and_human_decision(client, monkeypatch):
+    monkeypatch.setattr(main.settings, "max_upload_bytes", 40)
+    registered = client.post(
+        "/api/auth/register",
+        json={
+            "full_name": "Task Worker",
+            "email": "task-worker@example.com",
+            "password": "secure-worker-pass",
+            "role": "worker",
+        },
+    )
+    assert registered.status_code == 200
+
+    async def seed_task_catalogue():
+        async with dbmod.SessionLocal() as session:
+            qualification = Qualification(
+                code="TASK-T",
+                version="2",
+                title="Illustrative practical qualification",
+                source_name="Test fixture; not official",
+                source_url="",
+                official=False,
+            )
+            session.add(qualification)
+            await session.flush()
+            criterion = Criterion(
+                qualification_id=qualification.id,
+                code="TASK-C1",
+                description="Demonstrate the practical criterion",
+                mandatory=True,
+                requires_practical=True,
+            )
+            session.add(criterion)
+            await session.flush()
+            approved = ApprovedTask(
+                qualification_id=qualification.id,
+                criterion_id=criterion.id,
+                title="Illustrative task",
+                instructions="Complete the stated practical activity.",
+                rubric="Follow the steps and explain the result.",
+                source_name="Local test fixture; not official",
+                official=False,
+                approved=True,
+            )
+            unapproved = ApprovedTask(
+                qualification_id=qualification.id,
+                criterion_id=criterion.id,
+                title="Draft task",
+                instructions="This task is not approved for worker use.",
+                rubric="No rubric published.",
+                source_name="Local test fixture; not official",
+                official=False,
+                approved=False,
+            )
+            assessor = User(
+                email="task-assessor@example.com",
+                full_name="Task Assessor",
+                password_hash=PasswordHash.recommended().hash("secure-assessor-pass"),
+                role="assessor",
+            )
+            session.add_all([approved, unapproved, assessor])
+            await session.commit()
+            return qualification.id, criterion.id, approved.id, unapproved.id
+
+    qualification_id, criterion_id, task_id, unapproved_id = asyncio.run(seed_task_catalogue())
+    case_response = client.post("/api/worker/cases", json={"qualification_id": qualification_id})
+    assert case_response.status_code == 200
+    case_id = case_response.json()["id"]
+    case_data = client.get("/api/worker/cases").json()[0]
+    assert [task["id"] for task in case_data["practical_tasks"]] == [task_id]
+    assert case_data["practical_tasks"][0]["official"] is False
+
+    assert (
+        client.post(
+            f"/api/worker/cases/{case_id}/tasks/{unapproved_id}/attempts",
+            data={"description": "Attempt a draft task"},
+            files={"file": ("sample.pdf", b"%PDF-1.4\nprivate", "application/pdf")},
+        ).status_code
+        == 404
+    )
+    invalid_type = client.post(
+        f"/api/worker/cases/{case_id}/tasks/{task_id}/attempts",
+        data={"description": "Attempt the practical task"},
+        files={"file": ("sample.txt", b"plain text", "text/plain")},
+    )
+    assert invalid_type.status_code == 415
+    invalid_signature = client.post(
+        f"/api/worker/cases/{case_id}/tasks/{task_id}/attempts",
+        data={"description": "Attempt the practical task"},
+        files={"file": ("sample.pdf", b"not a pdf", "application/pdf")},
+    )
+    assert invalid_signature.status_code == 415
+    oversized = client.post(
+        f"/api/worker/cases/{case_id}/tasks/{task_id}/attempts",
+        data={"description": "Attempt the practical task"},
+        files={"file": ("sample.pdf", b"%PDF-1.4\n" + b"x" * 40, "application/pdf")},
+    )
+    assert oversized.status_code == 413
+    first_attempt = client.post(
+        f"/api/worker/cases/{case_id}/tasks/{task_id}/attempts",
+        data={"description": "  I completed the activity and documented the result.  "},
+        files={"file": ("private-work.pdf", b"%PDF-1.4\nprivate task evidence", "application/pdf")},
+    )
+    assert first_attempt.status_code == 200, first_attempt.text
+    first_attempt_id = first_attempt.json()["id"]
+    assert (
+        client.post(
+            f"/api/worker/cases/{case_id}/tasks/{task_id}/attempts",
+            data={"description": "Duplicate pending task attempt"},
+            files={"file": ("private-work.pdf", b"%PDF-1.4\nprivate", "application/pdf")},
+        ).status_code
+        == 409
+    )
+
+    async def persisted_attempt():
+        async with dbmod.SessionLocal() as session:
+            attempt = await session.get(PracticalTaskAttempt, first_attempt_id)
+            evidence = await session.scalar(
+                select(Evidence).where(Evidence.task_attempt_id == attempt.id)
+            )
+            return attempt, evidence
+
+    first_record, first_evidence = asyncio.run(persisted_attempt())
+    assert first_record.case_id == case_id
+    assert first_record.worker_id
+    assert first_record.qualification_id == qualification_id
+    assert first_record.criterion_id == criterion_id
+    assert first_record.task_id == task_id
+    assert first_record.description == "I completed the activity and documented the result."
+    assert first_record.submitted_at is not None
+    assert first_evidence is not None and first_evidence.case_id == case_id
+    assert first_evidence.worker_id == first_record.worker_id
+    assert first_evidence.criterion_id == criterion_id
+    assert first_evidence.stored_name not in first_evidence.original_name
+
+    async def database_rejects_two_active_attempts():
+        async with dbmod.SessionLocal() as session:
+            session.add(
+                PracticalTaskAttempt(
+                    case_id=first_record.case_id,
+                    worker_id=first_record.worker_id,
+                    qualification_id=first_record.qualification_id,
+                    criterion_id=first_record.criterion_id,
+                    task_id=first_record.task_id,
+                    description="Concurrent duplicate active attempt",
+                )
+            )
+            with pytest.raises(IntegrityError):
+                await session.commit()
+            await session.rollback()
+
+    asyncio.run(database_rejects_two_active_attempts())
+
+    client.post("/api/auth/logout")
+    pre_submission_assessor = client.post(
+        "/api/auth/login",
+        json={"email": "task-assessor@example.com", "password": "secure-assessor-pass"},
+    )
+    assert pre_submission_assessor.status_code == 200
+    assert client.get("/api/assessor/cases").json() == []
+    assert client.get(f"/api/evidence/{first_evidence.id}/file").status_code == 403
+    client.post("/api/auth/logout")
+    assert (
+        client.post(
+            "/api/auth/login",
+            json={"email": "task-worker@example.com", "password": "secure-worker-pass"},
+        ).status_code
+        == 200
+    )
+    assert client.post(f"/api/worker/cases/{case_id}/submit").status_code == 200
+
+    client.post("/api/auth/logout")
+    assessor = client.post(
+        "/api/auth/login",
+        json={"email": "task-assessor@example.com", "password": "secure-assessor-pass"},
+    )
+    assert assessor.status_code == 200
+    queue = client.get("/api/assessor/cases")
+    assert queue.status_code == 200 and len(queue.json()) == 1
+    listed_task = queue.json()[0]["practical_tasks"][0]
+    assert listed_task["attempts"][0]["id"] == first_attempt_id
+    assert client.get(f"/api/evidence/{first_evidence.id}/file").status_code == 200
+    decision_response = client.put(
+        f"/api/assessor/cases/{case_id}/criteria/{criterion_id}",
+        json={"result": "COMPETENT", "notes": "Reviewed the current task and criterion."},
+    )
+    assert decision_response.status_code == 200
+    assert (
+        client.put(
+            f"/api/assessor/task-attempts/{first_attempt_id}/review",
+            json={"result": "NEEDS_MORE", "notes": "Please add a clearer result explanation."},
+        ).status_code
+        == 200
+    )
+    assert (
+        client.put(
+            f"/api/assessor/task-attempts/{first_attempt_id}/review",
+            json={"result": "SATISFACTORY", "notes": "A duplicate decision is not permitted."},
+        ).status_code
+        == 409
+    )
+    assert client.post(f"/api/assessor/cases/{case_id}/verify").status_code == 409
+
+    async def get_assessor_id():
+        async with dbmod.SessionLocal() as session:
+            user = await session.scalar(
+                select(User).where(User.email == "task-assessor@example.com")
+            )
+            return user.id
+
+    assessor_id = asyncio.run(get_assessor_id())
+    client.post("/api/auth/logout")
+    other_worker = client.post(
+        "/api/auth/register",
+        json={
+            "full_name": "Other Task Worker",
+            "email": "other-task-worker@example.com",
+            "password": "secure-worker-pass",
+            "role": "worker",
+        },
+    )
+    assert other_worker.status_code == 200
+    assert client.post(f"/api/worker/cases/{case_id}/submit").status_code == 404
+    assert (
+        client.post(
+            f"/api/worker/cases/{case_id}/tasks/{task_id}/attempts",
+            data={"description": "Cross-owner attempt should fail"},
+            files={"file": ("sample.pdf", b"%PDF-1.4\nprivate", "application/pdf")},
+        ).status_code
+        == 404
+    )
+    assert client.get(f"/api/evidence/{first_evidence.id}/file").status_code == 403
+    assert (
+        client.put(
+            f"/api/assessor/task-attempts/{first_attempt_id}/review",
+            json={"result": "SATISFACTORY", "notes": "A worker cannot submit this decision."},
+        ).status_code
+        == 403
+    )
+
+    client.post("/api/auth/logout")
+    customer = client.post(
+        "/api/auth/register",
+        json={
+            "full_name": "Private Task Customer",
+            "email": "private-task-customer@example.com",
+            "password": "secure-customer-pass",
+            "role": "customer",
+        },
+    )
+    assert customer.status_code == 200
+    assert client.get(f"/api/evidence/{first_evidence.id}/file").status_code == 403
+    assert (
+        client.put(
+            f"/api/assessor/task-attempts/{first_attempt_id}/review",
+            json={"result": "SATISFACTORY", "notes": "Customer access must be denied."},
+        ).status_code
+        == 403
+    )
+
+    client.post("/api/auth/logout")
+    assert (
+        client.post(
+            "/api/auth/login",
+            json={"email": "task-worker@example.com", "password": "secure-worker-pass"},
+        ).status_code
+        == 200
+    )
+    assert client.post(f"/api/worker/cases/{case_id}/submit").status_code == 409
+    second_attempt = client.post(
+        f"/api/worker/cases/{case_id}/tasks/{task_id}/attempts",
+        data={"description": "I added the requested result explanation."},
+        files={
+            "file": ("remediation.pdf", b"%PDF-1.4\nremediated private evidence", "application/pdf")
+        },
+    )
+    assert second_attempt.status_code == 200, second_attempt.text
+    second_attempt_id = second_attempt.json()["id"]
+    assert second_attempt_id != first_attempt_id
+    assert client.post(f"/api/worker/cases/{case_id}/submit").status_code == 200
+
+    client.post("/api/auth/logout")
+    assert (
+        client.post(
+            "/api/auth/login",
+            json={"email": "task-assessor@example.com", "password": "secure-assessor-pass"},
+        ).status_code
+        == 200
+    )
+    assert (
+        client.put(
+            f"/api/assessor/task-attempts/{second_attempt_id}/review",
+            json={
+                "result": "SATISFACTORY",
+                "notes": "The submitted result meets the stated rubric.",
+            },
+        ).status_code
+        == 200
+    )
+
+    async def decisions_competencies_reviews_and_audit():
+        async with dbmod.SessionLocal() as session:
+            decision = await session.scalar(
+                select(CriterionDecision).where(
+                    CriterionDecision.case_id == case_id,
+                    CriterionDecision.criterion_id == criterion_id,
+                )
+            )
+            competency_count = await session.scalar(select(func.count()).select_from(Competency))
+            task_reviews = (
+                await session.scalars(
+                    select(PracticalTaskAttemptReview).where(
+                        PracticalTaskAttemptReview.attempt_id.in_(
+                            [first_attempt_id, second_attempt_id]
+                        )
+                    )
+                )
+            ).all()
+            audit_count = await session.scalar(
+                select(func.count())
+                .select_from(AuditEvent)
+                .where(AuditEvent.entity_type == "practical_task_attempt")
+            )
+            return decision, competency_count, task_reviews, audit_count
+
+    decision, competency_count, task_reviews, audit_count = asyncio.run(
+        decisions_competencies_reviews_and_audit()
+    )
+    assert (
+        decision is not None
+        and decision.result == "COMPETENT"
+        and decision.assessor_id == assessor_id
+    )
+    assert competency_count == 0
+    assert len(task_reviews) == 2 and audit_count == 4
+    assert client.post(f"/api/assessor/cases/{case_id}/verify").status_code == 409
+    reconfirmed = client.put(
+        f"/api/assessor/cases/{case_id}/criteria/{criterion_id}",
+        json={"result": "COMPETENT", "notes": "Reconfirmed after reviewing remediation evidence."},
+    )
+    assert reconfirmed.status_code == 200
+    verified = client.post(f"/api/assessor/cases/{case_id}/verify")
+    assert verified.status_code == 200 and verified.json()["verified"] is True
+    assert (
+        client.put(
+            f"/api/assessor/task-attempts/{second_attempt_id}/review",
+            json={"result": "NEEDS_MORE", "notes": "Finalized reviews cannot be changed."},
+        ).status_code
+        == 409
+    )
 
 
 def test_worker_profile_and_skill_declarations_are_owned_and_not_verified(client):

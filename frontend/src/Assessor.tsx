@@ -12,6 +12,24 @@ type Evidence = {
   uploaded_at: string
 }
 type Decision = { result: 'COMPETENT' | 'NOT_YET'; notes: string; assessor_name: string; updated_at: string; needs_reconfirmation: boolean }
+type PracticalTaskAttempt = {
+  id: string
+  description: string
+  submitted_at: string
+  evidence: { id: string; description: string; original_name: string; uploaded_at: string } | null
+  review: { result: 'SATISFACTORY' | 'NEEDS_MORE'; notes: string; reviewed_at: string } | null
+}
+type PracticalTask = {
+  id: string
+  criterion_id: string
+  title: string
+  instructions: string
+  rubric: string
+  source_name: string
+  source_url: string
+  official: boolean
+  attempts: PracticalTaskAttempt[]
+}
 type Criterion = {
   id: string
   code: string
@@ -45,6 +63,7 @@ type Case = {
     official: boolean
   }
   criteria: Criterion[]
+  practical_tasks: PracticalTask[]
 }
 
 export default function Assessor() {
@@ -92,7 +111,10 @@ export default function Assessor() {
   const mandatory = active?.criteria.filter(criterion => criterion.mandatory) ?? []
   const canVerify = mandatory.length > 0 && mandatory.every(criterion =>
     criterion.decision?.result === 'COMPETENT' && !criterion.decision.needs_reconfirmation,
-  )
+  ) && (active?.practical_tasks ?? []).filter(task => mandatory.some(criterion => criterion.id === task.criterion_id)).every(task => {
+    const latest = task.attempts.at(-1)
+    return latest?.review?.result === 'SATISFACTORY'
+  })
 
   return <>
     <div className="page-heading">
@@ -132,15 +154,90 @@ export default function Assessor() {
             {criterion.evidence.map(evidence => <EvidenceReview key={evidence.id} evidence={evidence} disabled={busy || active.status === 'VERIFIED'} locale={locale} onSave={(status, notes) => run(() => api(`/assessor/evidence/${evidence.id}`, { method: 'PATCH', body: json({ status, notes }) }), 'Evidence review saved')} />)}
             {!criterion.evidence.length && <p className="empty-inline">No evidence submitted for this criterion.</p>}
           </div>
+          {active.practical_tasks.filter(task => task.criterion_id === criterion.id).map(task => <PracticalTaskReview key={task.id} task={task} disabled={busy || active.status === 'VERIFIED'} onReview={(attemptId, result, notes) => run(() => api(`/assessor/task-attempts/${attemptId}/review`, { method: 'PUT', body: json({ result, notes }) }), result === 'NEEDS_MORE' ? 'Task remediation requested' : 'Practical task reviewed')} />)}
           <DecisionEditor criterion={criterion} disabled={busy || active.status === 'VERIFIED'} onSave={(result, notes) => run(() => api(`/assessor/cases/${active.id}/criteria/${criterion.id}`, { method: 'PUT', body: json({ result, notes }) }), 'Criterion decision saved')} />
         </article>)}
 
-        <div className="verify-bar"><div><b>Final competency decision</b><small>Only your human assessment can verify competency. Every mandatory criterion needs a current competent decision.</small>{active.status !== 'VERIFIED' && !canVerify && <small className="warning-note">Complete and reconfirm each mandatory criterion before final verification.</small>}</div>
+        <div className="verify-bar"><div><b>Final competency decision</b><small>Only your human assessment can verify competency. Every mandatory criterion needs a current competent decision, and applicable practical tasks need a satisfactory assessor review.</small>{active.status !== 'VERIFIED' && !canVerify && <small className="warning-note">Complete current criterion decisions and task reviews before final verification.</small>}</div>
           <button type="button" className="button primary" disabled={busy || active.status === 'VERIFIED' || !canVerify} onClick={() => void run(() => api(`/assessor/cases/${active.id}/verify`, { method: 'POST' }), 'Competency verified')}>{active.status === 'VERIFIED' ? 'Verified' : 'Verify competency'} <span aria-hidden="true">✓</span></button>
         </div>
       </section> : <EmptyState title="Select a case" description="Assessment cases appear here when workers submit evidence." />}
     </div>
   </>
+}
+
+function PracticalTaskReview({ task, disabled, onReview }: {
+  task: PracticalTask
+  disabled: boolean
+  onReview: (attemptId: string, result: 'SATISFACTORY' | 'NEEDS_MORE', notes: string) => Promise<void>
+}) {
+  const [notes, setNotes] = useState('')
+  const [result, setResult] = useState<'SATISFACTORY' | 'NEEDS_MORE'>('SATISFACTORY')
+  const [saving, setSaving] = useState(false)
+  const [downloading, setDownloading] = useState('')
+  const [error, setError] = useState('')
+  const pending = task.attempts.find(attempt => !attempt.review)
+  const validNotes = notes.trim().length >= 3
+
+  async function download(evidenceId: string, fileName: string) {
+    setDownloading(evidenceId)
+    setError('')
+    try {
+      const response = await fetch(`${API}/api/evidence/${evidenceId}/file`, { credentials: 'include' })
+      if (!response.ok) {
+        let message = `Request failed (${response.status})`
+        try { const body = await response.json() as { detail?: string }; message = body.detail ?? message } catch { /* keep status */ }
+        throw new Error(message)
+      }
+      const objectUrl = URL.createObjectURL(await response.blob())
+      const anchor = document.createElement('a')
+      anchor.href = objectUrl
+      anchor.download = fileName
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not access private task evidence')
+    } finally {
+      setDownloading('')
+    }
+  }
+
+  async function saveReview() {
+    if (!pending) return
+    setSaving(true)
+    setError('')
+    try {
+      await onReview(pending.id, result, notes.trim())
+      setNotes('')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not save task review')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return <section className="panel practical-task-card" aria-labelledby={`assessor-task-${task.id}`}>
+    <div className="catalogue-detail-head"><div><p className="eyebrow">PRACTICAL TASK · {task.official ? 'SOURCED' : 'ILLUSTRATIVE'}</p><h4 id={`assessor-task-${task.id}`}>{task.title}</h4></div><span className={`status-tag ${task.official ? 'verified' : 'muted'}`}>{task.official ? 'Sourced task' : 'Illustrative, not official'}</span></div>
+    <p>{task.instructions}</p>
+    <p className="subtle"><b>Rubric:</b> {task.rubric}</p>
+    <small>Source: {task.source_name}{task.source_url.startsWith('https://') && <> · <a href={task.source_url} target="_blank" rel="noreferrer">View source ↗</a></>}</small>
+    {task.attempts.map((attempt, index) => <article className="task-attempt-record" key={attempt.id}>
+      <div className="request-top"><b>Attempt {index + 1}</b><span className="status-tag">{attempt.review?.result === 'SATISFACTORY' ? 'Satisfactory' : attempt.review?.result === 'NEEDS_MORE' ? 'Remediation requested' : 'Awaiting review'}</span></div>
+      <p>{attempt.description}</p>
+      {attempt.evidence && <div className="evidence-file"><span aria-hidden="true">▧</span><div><b>{attempt.evidence.original_name}</b><small>{attempt.evidence.description}</small></div><button type="button" className="text-button" disabled={downloading === attempt.evidence.id} onClick={() => void download(attempt.evidence!.id, attempt.evidence!.original_name)}>{downloading === attempt.evidence.id ? 'Loading…' : 'Open private task evidence'}</button></div>}
+      {attempt.review && <p className="review-note">Assessor feedback: {attempt.review.notes}</p>}
+    </article>)}
+    {pending && <div className="task-review-form">
+      <label>Practical task outcome<select value={result} disabled={disabled || saving} onChange={event => setResult(event.target.value as 'SATISFACTORY' | 'NEEDS_MORE')}><option value="SATISFACTORY">Satisfactory against rubric</option><option value="NEEDS_MORE">Request remediation</option></select></label>
+      <label>Assessor notes<textarea value={notes} disabled={disabled || saving} onChange={event => setNotes(event.target.value)} minLength={3} maxLength={2000} aria-invalid={!validNotes} aria-describedby={`task-review-note-${task.id}`} placeholder="Explain how the attempt meets the rubric or what the worker should address" /></label>
+      <small id={`task-review-note-${task.id}`}>{validNotes ? 'A clear explanation is saved with this review.' : 'Add at least three characters before saving.'}</small>
+      <button type="button" className="button secondary small-button" disabled={disabled || saving || !validNotes} onClick={() => void saveReview()}>{saving ? 'Saving…' : result === 'NEEDS_MORE' ? 'Request task remediation' : 'Save task review'}</button>
+    </div>}
+    {!pending && task.attempts.length > 0 && <p className="subtle">All submitted attempts have been reviewed. The latest review is used for this qualification case.</p>}
+    {error && <Feedback>{error}</Feedback>}
+  </section>
 }
 
 function EvidenceReview({ evidence, disabled, locale, onSave }: { evidence: Evidence; disabled: boolean; locale: 'en' | 'hi' | 'hne'; onSave: (status: string, notes: string) => Promise<void> }) {

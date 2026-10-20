@@ -36,6 +36,8 @@ from app.models import (
     CustomerReview,
     DeclaredSkill,
     Evidence,
+    PracticalTaskAttempt,
+    PracticalTaskAttemptReview,
     Qualification,
     ServiceRequest,
     User,
@@ -187,6 +189,19 @@ class ReviewInput(BaseModel):
         return value.strip()
 
 
+class PracticalTaskReviewInput(BaseModel):
+    result: str = Field(pattern="^(SATISFACTORY|NEEDS_MORE)$")
+    notes: str = Field(min_length=3, max_length=2000)
+
+    @field_validator("notes")
+    @classmethod
+    def normalize_task_review_notes(cls, value: str) -> str:
+        notes = value.strip()
+        if len(notes) < 3:
+            raise ValueError("Please provide a clear task review note")
+        return notes
+
+
 class UserStatusInput(BaseModel):
     active: bool
 
@@ -289,6 +304,89 @@ async def audit(
 
 async def worker_profile(db: AsyncSession, user_id: str):
     return await db.scalar(select(WorkerProfile).where(WorkerProfile.user_id == user_id))
+
+
+async def practical_task_records(db: AsyncSession, case: AssessmentCase):
+    tasks = (
+        await db.scalars(
+            select(ApprovedTask)
+            .where(
+                ApprovedTask.qualification_id == case.qualification_id,
+                ApprovedTask.approved.is_(True),
+            )
+            .order_by(ApprovedTask.criterion_id, ApprovedTask.title)
+        )
+    ).all()
+    records = []
+    for task in tasks:
+        attempts = (
+            await db.scalars(
+                select(PracticalTaskAttempt)
+                .where(
+                    PracticalTaskAttempt.case_id == case.id,
+                    PracticalTaskAttempt.worker_id == case.worker_id,
+                    PracticalTaskAttempt.qualification_id == case.qualification_id,
+                    PracticalTaskAttempt.criterion_id == task.criterion_id,
+                    PracticalTaskAttempt.task_id == task.id,
+                )
+                .order_by(PracticalTaskAttempt.submitted_at, PracticalTaskAttempt.id)
+            )
+        ).all()
+        attempt_records = []
+        for attempt in attempts:
+            evidence = await db.scalar(
+                select(Evidence).where(
+                    Evidence.task_attempt_id == attempt.id,
+                    Evidence.case_id == case.id,
+                    Evidence.worker_id == case.worker_id,
+                    Evidence.criterion_id == task.criterion_id,
+                )
+            )
+            review = await db.scalar(
+                select(PracticalTaskAttemptReview).where(
+                    PracticalTaskAttemptReview.attempt_id == attempt.id
+                )
+            )
+            attempt_records.append(
+                {
+                    "id": attempt.id,
+                    "description": attempt.description,
+                    "submitted_at": attempt.submitted_at.isoformat(),
+                    "evidence": (
+                        {
+                            "id": evidence.id,
+                            "description": evidence.description,
+                            "original_name": evidence.original_name,
+                            "uploaded_at": evidence.uploaded_at.isoformat(),
+                        }
+                        if evidence
+                        else None
+                    ),
+                    "review": (
+                        {
+                            "result": review.result,
+                            "notes": review.notes,
+                            "reviewed_at": review.reviewed_at.isoformat(),
+                        }
+                        if review
+                        else None
+                    ),
+                }
+            )
+        records.append(
+            {
+                "id": task.id,
+                "criterion_id": task.criterion_id,
+                "title": task.title,
+                "instructions": task.instructions,
+                "rubric": task.rubric,
+                "source_name": task.source_name,
+                "source_url": task.source_url,
+                "official": task.official,
+                "attempts": attempt_records,
+            }
+        )
+    return records
 
 
 @app.post("/api/auth/register")
@@ -529,6 +627,7 @@ async def list_cases(user: User = Depends(require("worker")), db: AsyncSession =
         crits = (
             await db.scalars(select(Criterion).where(Criterion.qualification_id == q.id))
         ).all()
+        task_records = await practical_task_records(db, case)
         out.append(
             {
                 "id": case.id,
@@ -550,7 +649,9 @@ async def list_cases(user: User = Depends(require("worker")), db: AsyncSession =
                         "reviewer_notes": e.reviewer_notes,
                     }
                     for e in ev
+                    if e.task_attempt_id is None
                 ],
+                "practical_tasks": task_records,
                 "criteria": [
                     {
                         "id": c.id,
@@ -640,10 +741,151 @@ async def submit_case(
             "Add evidence for each mandatory criterion before submission",
             headers={"X-Missing-Criteria": ", ".join(missing)},
         )
+    tasks = (
+        await db.scalars(
+            select(ApprovedTask).where(
+                ApprovedTask.qualification_id == case.qualification_id,
+                ApprovedTask.approved.is_(True),
+                ApprovedTask.criterion_id.in_([criterion.id for criterion in criteria]),
+            )
+        )
+    ).all()
+    for task in tasks:
+        latest = await db.scalar(
+            select(PracticalTaskAttempt)
+            .where(PracticalTaskAttempt.case_id == case.id, PracticalTaskAttempt.task_id == task.id)
+            .order_by(PracticalTaskAttempt.submitted_at.desc(), PracticalTaskAttempt.id.desc())
+            .limit(1)
+        )
+        if not latest:
+            raise HTTPException(409, f"Submit a practical task attempt for {task.title}")
+        review = await db.scalar(
+            select(PracticalTaskAttemptReview).where(
+                PracticalTaskAttemptReview.attempt_id == latest.id
+            )
+        )
+        if review and review.result == "NEEDS_MORE":
+            raise HTTPException(409, f"Submit a new attempt for {task.title} after remediation")
     case.status = "SUBMITTED"
     await audit(db, user, "assessment.case.submitted", "assessment_case", case.id)
     await db.commit()
     return {"id": case.id, "status": case.status}
+
+
+@app.post("/api/worker/cases/{case_id}/tasks/{task_id}/attempts")
+async def submit_practical_task_attempt(
+    case_id: str,
+    task_id: str,
+    description: str = Form(...),
+    file: UploadFile = File(...),
+    user: User = Depends(require("worker")),
+    db: AsyncSession = Depends(get_db),
+):
+    profile = await worker_profile(db, user.id)
+    case = await db.get(AssessmentCase, case_id)
+    if not case or case.worker_id != profile.id:
+        raise HTTPException(404, "Assessment case not found")
+    if case.status not in {"IN_PROGRESS", "NEEDS_MORE"}:
+        raise HTTPException(409, "This assessment is no longer open for task submission")
+    task = await db.get(ApprovedTask, task_id)
+    if not task or not task.approved or task.qualification_id != case.qualification_id:
+        raise HTTPException(404, "Approved practical task not found")
+    criterion = await db.get(Criterion, task.criterion_id)
+    if not criterion or criterion.qualification_id != case.qualification_id:
+        raise HTTPException(404, "Practical task criterion not found")
+    previous = await db.scalar(
+        select(PracticalTaskAttempt)
+        .where(PracticalTaskAttempt.case_id == case.id, PracticalTaskAttempt.task_id == task.id)
+        .order_by(PracticalTaskAttempt.submitted_at.desc(), PracticalTaskAttempt.id.desc())
+        .limit(1)
+    )
+    if previous:
+        if previous.active_attempt:
+            raise HTTPException(409, "A practical task attempt is already awaiting assessor review")
+        previous_review = await db.scalar(
+            select(PracticalTaskAttemptReview).where(
+                PracticalTaskAttemptReview.attempt_id == previous.id
+            )
+        )
+        if not previous_review or previous_review.result != "NEEDS_MORE":
+            raise HTTPException(
+                409, "A new attempt is available only after remediation is requested"
+            )
+
+    description = description.strip()
+    if not 5 <= len(description) <= 2000:
+        raise HTTPException(422, "Task attempt description must be between 5 and 2000 characters")
+    allowed = {"application/pdf", "image/jpeg", "image/png", "image/webp"}
+    if file.content_type not in allowed:
+        raise HTTPException(415, "Upload a PDF, JPEG, PNG, or WebP file")
+    content = await file.read(settings.max_upload_bytes + 1)
+    if not content or len(content) > settings.max_upload_bytes:
+        raise HTTPException(
+            413,
+            f"Evidence file must be non-empty and no larger than {settings.max_upload_bytes} bytes",
+        )
+    signatures = {
+        "application/pdf": content.startswith(b"%PDF-"),
+        "image/jpeg": content.startswith(b"\xff\xd8\xff"),
+        "image/png": content.startswith(b"\x89PNG\r\n\x1a\n"),
+        "image/webp": content.startswith(b"RIFF") and content[8:12] == b"WEBP",
+    }
+    if not signatures[file.content_type]:
+        raise HTTPException(415, "The uploaded file does not match its declared file type")
+    suffix = {
+        "application/pdf": ".pdf",
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+    }[file.content_type]
+    stored = secrets.token_hex(24) + suffix
+    path = Path(settings.evidence_dir) / stored
+    path.parent.mkdir(parents=True, exist_ok=True)
+    original_name = Path(file.filename or "evidence").name.replace("\r", "").replace("\n", "")
+    original_name = original_name[:255] or "evidence"
+    attempt = PracticalTaskAttempt(
+        case_id=case.id,
+        worker_id=profile.id,
+        qualification_id=case.qualification_id,
+        criterion_id=criterion.id,
+        task_id=task.id,
+        description=description,
+    )
+    try:
+        db.add(attempt)
+        await db.flush()
+        evidence = Evidence(
+            case_id=case.id,
+            worker_id=profile.id,
+            criterion_id=criterion.id,
+            task_attempt_id=attempt.id,
+            description=description,
+            original_name=original_name,
+            stored_name=stored,
+            media_type=file.content_type,
+            size_bytes=len(content),
+            sha256=hashlib.sha256(content).hexdigest(),
+        )
+        with path.open("xb") as evidence_file:
+            evidence_file.write(content)
+        db.add(evidence)
+        await db.flush()
+        await audit(
+            db,
+            user,
+            "practical_task.attempt_submitted",
+            "practical_task_attempt",
+            attempt.id,
+            {"task_id": task.id, "criterion_id": criterion.id},
+        )
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        path.unlink(missing_ok=True)
+        if isinstance(exc, IntegrityError):
+            raise HTTPException(409, "A practical task attempt is already awaiting assessor review")
+        raise
+    return {"id": attempt.id, "status": "SUBMITTED", "evidence_id": evidence.id}
 
 
 @app.post("/api/worker/cases/{case_id}/evidence")
@@ -764,6 +1006,7 @@ async def assessor_cases(
             await db.scalars(select(Criterion).where(Criterion.qualification_id == q.id))
         ).all()
         evidence = (await db.scalars(select(Evidence).where(Evidence.case_id == case.id))).all()
+        task_records = await practical_task_records(db, case)
         decisions = (
             await db.scalars(select(CriterionDecision).where(CriterionDecision.case_id == case.id))
         ).all()
@@ -779,7 +1022,8 @@ async def assessor_cases(
             )
         evidence_by_criterion: dict[str, list[Evidence]] = {}
         for item in evidence:
-            evidence_by_criterion.setdefault(item.criterion_id, []).append(item)
+            if item.task_attempt_id is None:
+                evidence_by_criterion.setdefault(item.criterion_id, []).append(item)
         mandatory = [item for item in criteria if item.mandatory]
         ready_count = sum(
             1
@@ -853,6 +1097,7 @@ async def assessor_cases(
                     }
                     for criterion in criteria
                 ],
+                "practical_tasks": task_records,
             }
         )
     return out
@@ -868,6 +1113,8 @@ async def assess_evidence(
     item = await db.get(Evidence, evidence_id)
     if not item:
         raise HTTPException(404, "Evidence not found")
+    if item.task_attempt_id is not None:
+        raise HTTPException(409, "Review practical-task evidence through its task attempt")
     case = await db.get(AssessmentCase, item.case_id)
     if not case or case.status not in {"SUBMITTED", "IN_REVIEW"}:
         raise HTTPException(409, "This case is not open for assessor review")
@@ -887,6 +1134,66 @@ async def assess_evidence(
     )
     await db.commit()
     return {"id": item.id, "review_status": item.review_status}
+
+
+@app.put("/api/assessor/task-attempts/{attempt_id}/review")
+async def review_practical_task_attempt(
+    attempt_id: str,
+    payload: PracticalTaskReviewInput,
+    user: User = Depends(require("assessor")),
+    db: AsyncSession = Depends(get_db),
+):
+    attempt = await db.get(PracticalTaskAttempt, attempt_id)
+    if not attempt:
+        raise HTTPException(404, "Practical task attempt not found")
+    case = await db.get(AssessmentCase, attempt.case_id)
+    task = await db.get(ApprovedTask, attempt.task_id)
+    evidence = await db.scalar(select(Evidence).where(Evidence.task_attempt_id == attempt.id))
+    if (
+        not case
+        or not task
+        or not evidence
+        or case.worker_id != attempt.worker_id
+        or case.qualification_id != attempt.qualification_id
+        or task.qualification_id != attempt.qualification_id
+        or task.criterion_id != attempt.criterion_id
+        or evidence.case_id != case.id
+        or evidence.worker_id != attempt.worker_id
+        or evidence.criterion_id != attempt.criterion_id
+    ):
+        raise HTTPException(404, "Practical task attempt not found")
+    if case.status not in {"SUBMITTED", "IN_REVIEW"}:
+        raise HTTPException(409, "This case is not open for practical-task review")
+    existing = await db.scalar(
+        select(PracticalTaskAttemptReview).where(
+            PracticalTaskAttemptReview.attempt_id == attempt.id
+        )
+    )
+    if existing:
+        raise HTTPException(409, "This practical task attempt has already been reviewed")
+    review = PracticalTaskAttemptReview(
+        attempt_id=attempt.id,
+        assessor_id=user.id,
+        result=payload.result,
+        notes=payload.notes,
+    )
+    attempt.active_attempt = False
+    db.add(review)
+    if payload.result == "NEEDS_MORE":
+        case.status = "NEEDS_MORE"
+    elif case.status == "SUBMITTED":
+        case.status = "IN_REVIEW"
+    await db.flush()
+    await audit(
+        db,
+        user,
+        "practical_task.attempt_reviewed",
+        "practical_task_attempt",
+        attempt.id,
+        {"result": review.result, "notes": review.notes, "criterion_id": attempt.criterion_id},
+    )
+    await db.commit()
+    return {"id": review.id, "result": review.result}
 
 
 @app.put("/api/assessor/cases/{case_id}/criteria/{criterion_id}")
@@ -981,6 +1288,36 @@ async def verify_case(
             "All mandatory criteria need a current COMPETENT assessor decision; reconfirm decisions after new evidence",
             headers={"X-Missing-Criteria": ", ".join(missing)},
         )
+    practical_tasks = (
+        await db.scalars(
+            select(ApprovedTask).where(
+                ApprovedTask.qualification_id == case.qualification_id,
+                ApprovedTask.approved.is_(True),
+                ApprovedTask.criterion_id.in_([criterion.id for criterion in criteria]),
+            )
+        )
+    ).all()
+    for task in practical_tasks:
+        latest = await db.scalar(
+            select(PracticalTaskAttempt)
+            .where(PracticalTaskAttempt.case_id == case.id, PracticalTaskAttempt.task_id == task.id)
+            .order_by(PracticalTaskAttempt.submitted_at.desc(), PracticalTaskAttempt.id.desc())
+            .limit(1)
+        )
+        latest_review = (
+            await db.scalar(
+                select(PracticalTaskAttemptReview).where(
+                    PracticalTaskAttemptReview.attempt_id == latest.id
+                )
+            )
+            if latest
+            else None
+        )
+        if not latest_review or latest_review.result != "SATISFACTORY":
+            raise HTTPException(
+                409,
+                f"An authorized assessor must record a satisfactory review for {task.title}",
+            )
     prior = await db.scalar(select(Competency).where(Competency.case_id == case.id))
     if prior:
         return {"verified": True, "competency_id": prior.id}

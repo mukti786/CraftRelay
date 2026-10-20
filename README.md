@@ -19,8 +19,8 @@ Workers may have developed useful skills through work and other experience witho
 
 ## How CraftRelay works
 
-- **Workers** create a profile, declare their skills and experience, select an available versioned qualification, and submit supporting evidence against its criteria. They can see review feedback and respond to requests for more evidence.
-- **Assessors** use a shared assessment queue to inspect submitted worker context and private evidence, record evidence reviews and criterion-level decisions with notes, and finalize a competency decision when the required criteria have been assessed. The current implementation does not provide assessor-to-case assignment.
+- **Workers** create a profile, declare their skills and experience, select an available versioned qualification, and submit supporting evidence against its criteria. When an approved practical task is attached to a criterion, they can submit a described attempt with private evidence and respond to assessor remediation requests. They can see review feedback and resubmit while the case is open.
+- **Assessors** use a shared assessment queue to inspect submitted worker context and private evidence, review practical-task attempts against their recorded rubric, request remediation with notes, record evidence reviews and criterion-level decisions, and finalize a competency decision when required criteria and applicable tasks have current satisfactory reviews. The current implementation does not provide assessor-to-case assignment.
 - **Customers** can discover worker profiles, send service requests, manage request status, and submit a service review after a completed engagement. Customer reviews are separate from formal competency decisions.
 - **Administrators** can manage account roles and status, maintain versioned qualification and criterion records, and view audit history. The local bootstrap data includes an illustrative qualification and criteria, clearly marked as non-official.
 
@@ -100,11 +100,11 @@ npm run build
 
 The repository contains working local workflows for worker profiles and evidence submissions, human assessor review, customer discovery and service requests, and administrator account and qualification management. English and Hindi localization are implemented; the Chhattisgarhi draft still needs human review. The included qualification and criteria are illustrative, not official sources.
 
-This is an active project, not a claim of production readiness. PostgreSQL operation and browser acceptance testing have not been verified. Evidence currently uses private local filesystem storage; production object storage, retention policy, deployment configuration, and operational security controls still need decisions and validation. Practical-task data structures exist, but workers cannot complete practical task attempts in the current UI. AI/RAG assistance and offline synchronization are not implemented. Do not use the local demonstration setup for real worker records.
+This is an active project, not a claim of production readiness. PostgreSQL operation and browser acceptance testing have not been verified. Evidence currently uses private local filesystem storage; production object storage, retention policy, deployment configuration, and operational security controls still need decisions and validation. The practical-task attempt and assessor-review workflow is implemented for approved catalogue tasks, but any illustrative task data remains explicitly non-official. AI/RAG assistance and offline synchronization are not implemented. Do not use the local demonstration setup for real worker records.
 
 ## Future improvements
 
-Realistic next steps include completing worker practical-task attempts and assessor rubric review, independently validating PostgreSQL migrations and operation, planning secure evidence storage and retention for a deployment, reviewing the Chhattisgarhi translations with fluent speakers, and evaluating any future AI assistance under human oversight without automating certification.
+Realistic next steps include independently validating PostgreSQL migrations and operation, planning secure evidence storage and retention for a deployment, reviewing the Chhattisgarhi translations with fluent speakers, and evaluating any future AI assistance under human oversight without automating certification.
 
 ## Repository notes
 

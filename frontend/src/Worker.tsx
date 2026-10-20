@@ -11,12 +11,32 @@ type EvidenceRow = {
   reviewer_notes: string
 }
 
+type PracticalTaskAttempt = {
+  id: string
+  description: string
+  submitted_at: string
+  evidence: { id: string; description: string; original_name: string; uploaded_at: string } | null
+  review: { result: 'SATISFACTORY' | 'NEEDS_MORE'; notes: string; reviewed_at: string } | null
+}
+type PracticalTask = {
+  id: string
+  criterion_id: string
+  title: string
+  instructions: string
+  rubric: string
+  source_name: string
+  source_url: string
+  official: boolean
+  attempts: PracticalTaskAttempt[]
+}
+
 type Case = {
   id: string
   status: string
   qualification: Qualification
   criteria: Criterion[]
   evidence: EvidenceRow[]
+  practical_tasks: PracticalTask[]
 }
 
 type QualificationDetails = Qualification & { criteria: Criterion[] }
@@ -182,7 +202,7 @@ export default function Worker({ section }: { section: 'profile' | 'assessment' 
       </div>
         <button className="button primary small-button" disabled={busy} onClick={() => void action(() => api(`/worker/cases/${item.id}/submit`, { method: 'POST' }), 'Assessment submitted to the assessor queue')}>{item.status === 'NEEDS_MORE' ? 'Resubmit for review' : 'Submit for review'} <span>→</span></button>
       </div> : <div className="submit-case"><div><b>{item.status === 'VERIFIED' ? 'Assessor decision recorded' : 'Submitted for assessor review'}</b><small>Evidence is locked while the assessor reviews this version.</small></div></div>}
-      <div className="criteria-list">{item.criteria.map(criterion => <CriterionRow key={criterion.id} criterion={criterion} evidence={item.evidence.filter(evidence => evidence.criterion_id === criterion.id)} caseId={item.id} disabled={item.status !== 'IN_PROGRESS' && item.status !== 'NEEDS_MORE'} onUploaded={async () => {
+      <div className="criteria-list">{item.criteria.map(criterion => <CriterionRow key={criterion.id} criterion={criterion} evidence={item.evidence.filter(evidence => evidence.criterion_id === criterion.id)} tasks={item.practical_tasks.filter(task => task.criterion_id === criterion.id)} caseId={item.id} disabled={item.status !== 'IN_PROGRESS' && item.status !== 'NEEDS_MORE'} onUploaded={async () => {
         setNotice('Evidence uploaded for assessor review')
         await load(true)
       }} />)}</div>
@@ -227,9 +247,10 @@ function SkillForm({ busy, onAdd }: { busy: boolean; onAdd: (name: string, years
   </form>
 }
 
-function CriterionRow({ criterion, evidence, caseId, disabled, onUploaded }: {
+function CriterionRow({ criterion, evidence, tasks, caseId, disabled, onUploaded }: {
   criterion: Criterion
   evidence: EvidenceRow[]
+  tasks: PracticalTask[]
   caseId: string
   disabled: boolean
   onUploaded: () => Promise<void>
@@ -268,6 +289,7 @@ function CriterionRow({ criterion, evidence, caseId, disabled, onUploaded }: {
       <span className={`status-tag ${item.review_status === 'ACCEPTED' ? 'verified' : ''}`}>{item.review_status.replace('_', ' ')}</span>
       {item.reviewer_notes && <small className="review-note">Assessor: {item.reviewer_notes}</small>}
     </div>)}</div>
+    {tasks.map(task => <TaskAttemptForm key={task.id} task={task} caseId={caseId} disabled={disabled} onUploaded={onUploaded} />)}
     {!disabled && <form className="evidence-form" onSubmit={event => void submit(event)}>
       <input type="hidden" name="criterion_id" value={criterion.id} />
       <label className="sr-only" htmlFor={`evidence-description-${criterion.id}`}>Briefly describe this evidence</label>
@@ -283,4 +305,67 @@ function CriterionRow({ criterion, evidence, caseId, disabled, onUploaded }: {
       <small>PDF, JPEG, PNG, or WebP · max 20 MB · stored privately. Evidence is reviewed by an assessor.</small>
     </form>}
   </article>
+}
+
+function TaskAttemptForm({ task, caseId, disabled, onUploaded }: {
+  task: PracticalTask
+  caseId: string
+  disabled: boolean
+  onUploaded: () => Promise<void>
+}) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [progress, setProgress] = useState<number | null>(null)
+  const latest = task.attempts.at(-1)
+  const canAttempt = !latest || latest.review?.result === 'NEEDS_MORE'
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const form = event.currentTarget
+    const file = form.elements.namedItem('file') as HTMLInputElement
+    const description = String(new FormData(form).get('description') || '').trim()
+    if (description.length < 5) { setError('Describe the attempt in at least five characters.'); return }
+    if (!file.files?.[0]) { setError('Choose a file before submitting the task attempt.'); return }
+    const body = new FormData(form)
+    body.set('description', description)
+    setBusy(true)
+    setError('')
+    setProgress(0)
+    try {
+      await upload(`/worker/cases/${caseId}/tasks/${task.id}/attempts`, body, setProgress)
+      form.reset()
+      await onUploaded()
+      setProgress(null)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Task attempt submission failed. You can retry.')
+      setProgress(null)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return <section className="panel practical-task-card" aria-labelledby={`task-${task.id}`}>
+    <div className="catalogue-detail-head"><div><p className="eyebrow">PRACTICAL TASK</p><h4 id={`task-${task.id}`}>{task.title}</h4></div><span className={`status-tag ${task.official ? 'verified' : 'muted'}`}>{task.official ? 'Sourced task' : 'Illustrative, not official'}</span></div>
+    <p>{task.instructions}</p>
+    <p className="subtle"><b>Assessment rubric:</b> {task.rubric}</p>
+    <small>Source: {task.source_name}{task.source_url.startsWith('https://') && <> · <a href={task.source_url} target="_blank" rel="noreferrer">View source ↗</a></>}</small>
+    {task.attempts.map((attempt, index) => <div className="task-attempt-record" key={attempt.id}>
+      <b>Attempt {index + 1}</b><span className="status-tag">{attempt.review?.result === 'SATISFACTORY' ? 'Assessor reviewed' : attempt.review?.result === 'NEEDS_MORE' ? 'More evidence requested' : 'Awaiting assessor review'}</span>
+      <p>{attempt.description}</p>
+      {attempt.evidence && <small>{attempt.evidence.original_name}</small>}
+      {attempt.review && <p className="review-note">Assessor feedback: {attempt.review.notes}</p>}
+    </div>)}
+    {!disabled && canAttempt && <form className="evidence-form" onSubmit={event => void submit(event)}>
+      <label htmlFor={`task-description-${task.id}`}>Describe what you did</label>
+      <textarea id={`task-description-${task.id}`} name="description" rows={3} minLength={5} maxLength={2000} required aria-describedby={`task-description-help-${task.id}`} placeholder="Describe the work shown in your evidence" />
+      <small id={`task-description-help-${task.id}`}>Describe the activity and what the attached evidence shows.</small>
+      <label htmlFor={`task-evidence-${task.id}`}>Choose private task evidence</label>
+      <input id={`task-evidence-${task.id}`} name="file" type="file" required accept=".pdf,image/jpeg,image/png,image/webp" />
+      <button className="button secondary small-button" disabled={busy}>{busy ? 'Submitting…' : latest ? 'Submit remediation attempt' : 'Submit task attempt'}</button>
+      {progress !== null && <div className="upload-progress" role="status" aria-live="polite"><progress max="100" value={progress} aria-label="Task evidence upload progress"/><span>{progress < 100 ? `Uploading ${progress}%` : 'Upload sent · validating securely…'}</span></div>}
+      {error && <span className="form-error" role="alert">{error}</span>}
+      <small>PDF, JPEG, PNG, or WebP · max 20 MB · stored privately. Evidence is reviewed by an authorized assessor.</small>
+    </form>}
+    {!disabled && latest && !canAttempt && <p className="subtle">This task has an assessor-reviewed attempt. A new attempt is available only if the assessor requests remediation.</p>}
+  </section>
 }
